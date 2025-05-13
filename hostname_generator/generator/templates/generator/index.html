@@ -1,0 +1,771 @@
+{% extends "generator/base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">ESXi Hostname Generator</h5>
+            </div>
+            <div class="card-body">
+                <!-- Initial Form -->
+                <div id="initial-form-container">
+                    <form id="initial-form">
+                        {% csrf_token %}
+                        <div class="form-group mb-3">
+                            <label for="{{ initial_form.hostname_count.id_for_label }}">
+                                {{ initial_form.hostname_count.label }}
+                            </label>
+                            {{ initial_form.hostname_count }}
+                        </div>
+                        <button type="submit" class="btn btn-primary">Start</button>
+                    </form>
+                </div>
+                
+                <!-- Hostname Generator Form (initially hidden) -->
+                <div id="hostname-form-container" style="display: none;">
+                    <form id="hostname-form">
+                        {% csrf_token %}
+                        <!-- Progress bar -->
+                        <div class="progress mb-4">
+                            <div id="progress-bar" class="progress-bar" role="progressbar" style="width: 0%;" 
+                                 aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
+                        </div>
+                        
+                        <!-- Hostname counter -->
+                        <div class="mb-3 text-center">
+                            <h5>Generating hostname <span id="current-hostname">1</span> of <span id="total-hostnames">1</span></h5>
+                        </div>
+                        
+                        <!-- Step 1: DMZ -->
+                        <div id="step-1" class="step-container">
+                            <div class="form-group mb-3">
+                                <label for="{{ hostname_form.is_dmz.id_for_label }}">
+                                    {{ hostname_form.is_dmz.label }}
+                                </label>
+                                {{ hostname_form.is_dmz }}
+                            </div>
+                            <button type="button" id="step-1-next" class="btn btn-primary" disabled>Next</button>
+                        </div>
+                        
+                        <!-- Step 2: Datacenter -->
+                        <div id="step-2" class="step-container" style="display: none;">
+                            <div class="form-group mb-3">
+                                <label for="{{ hostname_form.datacenter.id_for_label }}">
+                                    {{ hostname_form.datacenter.label }}
+                                </label>
+                                {{ hostname_form.datacenter }}
+                            </div>
+                            <button type="button" id="step-2-next" class="btn btn-primary" disabled>Next</button>
+                        </div>
+                        
+                        <!-- Step 3: Hardware Type (only if not DMZ) -->
+                        <div id="step-3" class="step-container" style="display: none;">
+                            <div class="form-group mb-3">
+                                <label for="{{ hostname_form.hardware_type.id_for_label }}">
+                                    {{ hostname_form.hardware_type.label }}
+                                </label>
+                                {{ hostname_form.hardware_type }}
+                            </div>
+                            <button type="button" id="step-3-next" class="btn btn-primary" disabled>Next</button>
+                        </div>
+                        
+                        <!-- Step 4: Zone Type (only if not DMZ) -->
+                        <div id="step-4" class="step-container" style="display: none;">
+                            <div class="form-group mb-3">
+                                <label for="{{ hostname_form.zone_type.id_for_label }}">
+                                    {{ hostname_form.zone_type.label }}
+                                </label>
+                                {{ hostname_form.zone_type }}
+                            </div>
+                            
+                            <!-- Custom zone input (for Zone A and Zone B) -->
+                            <div id="custom-zone-container" class="form-group mb-3" style="display: none;">
+                                <label for="{{ hostname_form.custom_zone.id_for_label }}">
+                                    {{ hostname_form.custom_zone.label }}
+                                </label>
+                                {{ hostname_form.custom_zone }}
+                            </div>
+                            
+                            <button type="button" id="step-4-next" class="btn btn-primary" disabled>Generate</button>
+                        </div>
+                    </form>
+                </div>
+                
+                <!-- Results container -->
+                <div id="results-container" style="display: none;">
+                    <h4>Generated Hostnames:</h4>
+                    <div class="list-group" id="hostname-list">
+                        <!-- Hostnames will be added here -->
+                    </div>
+                    <div class="mt-3">
+                        <button type="button" id="generate-more" class="btn btn-primary">Generate More</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal for displaying the newly generated hostname -->
+<div class="modal fade" id="hostname-modal" tabindex="-1" aria-labelledby="hostname-modal-label" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="hostname-modal-label">Generated Hostname</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Your ESXi hostname has been generated:</p>
+                <h4 id="modal-hostname" class="text-center"></h4>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary" id="copy-hostname">Copy to Clipboard</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Main initialization function that runs when DOM is loaded
+    document.addEventListener('DOMContentLoaded', function() {
+        try {
+            console.log("DOM fully loaded - initializing form logic");
+            
+            // Variables to track generation progress
+            let hostnameCount = 1;
+            let currentHostname = 1;
+            let generatedHostnames = [];
+            let formData = {};
+            
+            // Get form elements
+            const initialForm = document.getElementById('initial-form');
+            const initialFormContainer = document.getElementById('initial-form-container');
+            const hostnameFormContainer = document.getElementById('hostname-form-container');
+            const hostnameCountInput = document.getElementById('{{ initial_form.hostname_count.id_for_label }}');
+            const submitButton = document.querySelector('#initial-form button[type="submit"]');
+            
+            // Initial form submission
+            if (initialForm) {
+                initialForm.addEventListener('submit', function(e) {
+                    e.preventDefault();
+                    handleInitialFormSubmit();
+                });
+            }
+            
+            // Also handle click on submit button as a backup
+            if (submitButton) {
+                submitButton.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    handleInitialFormSubmit();
+                });
+            }
+            
+            // Immediately debug and enable all buttons
+            debugAllButtons();
+            forceEnableAllControls();
+            
+            // Debug all buttons to see what's available
+            function debugAllButtons() {
+                console.log("Debugging all buttons on the page:");
+                document.querySelectorAll('button').forEach((button, index) => {
+                    console.log(`Button ${index}:`, {
+                        id: button.id,
+                        text: button.textContent.trim(),
+                        classes: button.className,
+                        disabled: button.hasAttribute('disabled'),
+                        visible: isElementVisible(button)
+                    });
+                });
+                
+                // Specifically look for step-4-next
+                const step4NextButton = document.getElementById('step-4-next');
+                if (step4NextButton) {
+                    console.log("Found step-4-next button:", {
+                        id: step4NextButton.id,
+                        text: step4NextButton.textContent.trim(),
+                        classes: step4NextButton.className,
+                        disabled: step4NextButton.hasAttribute('disabled'),
+                        visible: isElementVisible(step4NextButton)
+                    });
+                } else {
+                    console.log("step-4-next button not found by ID");
+                    
+                    // Try to find by other attributes
+                    console.log("Looking for step-4-next button by other attributes:");
+                    document.querySelectorAll('button.btn-next').forEach((btn, i) => {
+                        console.log(`Next button ${i}:`, {
+                            id: btn.id,
+                            text: btn.textContent.trim(),
+                            classes: btn.className,
+                            dataNext: btn.getAttribute('data-next'),
+                            disabled: btn.hasAttribute('disabled'),
+                            visible: isElementVisible(btn)
+                        });
+                    });
+                }
+            }
+            
+            // Helper function to check if element is visible
+            function isElementVisible(element) {
+                if (!element) return false;
+                const style = window.getComputedStyle(element);
+                return style.display !== 'none' && style.visibility !== 'hidden' && element.offsetParent !== null;
+            }
+            
+            function forceEnableAllControls() {
+                console.log("Enabling all form controls");
+                
+                // Enable all buttons
+                document.querySelectorAll('button').forEach(button => {
+                    button.removeAttribute('disabled');
+                    button.classList.remove('disabled');
+                    console.log("Enabled button:", button.id || button.textContent.trim() || button.className);
+                });
+                
+                // Enable all dropdowns
+                document.querySelectorAll('select').forEach(select => {
+                    select.removeAttribute('disabled');
+                });
+                
+                // Enable all inputs
+                document.querySelectorAll('input').forEach(input => {
+                    input.removeAttribute('disabled');
+                });
+                
+                // Specifically find and enable the hardware type "Next" button
+                const step4Buttons = document.querySelectorAll('#step-4 button');
+                step4Buttons.forEach(button => {
+                    if (button.textContent.includes('Next') || button.classList.contains('btn-next')) {
+                        button.removeAttribute('disabled');
+                        button.classList.remove('disabled');
+                        console.log("Specifically enabled hardware type next button:", button.id || button.textContent.trim());
+                        
+                        // Ensure it has a click event
+                        button.addEventListener('click', function(e) {
+                            console.log("Hardware type Next button clicked");
+                            e.preventDefault();
+                            
+                            // Get step elements
+                            const step4 = document.getElementById('step-4');
+                            const step5 = document.getElementById('step-5');
+                            
+                            // Transition to next step
+                            if (step4 && step5) {
+                                step4.style.display = 'none';
+                                step5.style.display = 'block';
+                                forceEnableAllControls();
+                            }
+                        });
+                    }
+                });
+                
+                // Find any buttons with a data-next attribute pointing to step-5
+                document.querySelectorAll('button[data-next="step-5"]').forEach(button => {
+                    button.removeAttribute('disabled');
+                    button.classList.remove('disabled');
+                    console.log("Enabled button with data-next=step-5:", button.id || button.textContent.trim());
+                    
+                    // Ensure it has a click event
+                    button.addEventListener('click', function(e) {
+                        console.log("Button with data-next=step-5 clicked");
+                        e.preventDefault();
+                        
+                        // Get step elements
+                        const step4 = document.getElementById('step-4');
+                        const step5 = document.getElementById('step-5');
+                        
+                        // Transition to next step
+                        if (step4 && step5) {
+                            step4.style.display = 'none';
+                            step5.style.display = 'block';
+                            forceEnableAllControls();
+                        }
+                    });
+                });
+            }
+            
+            function handleInitialFormSubmit() {
+                try {
+                    if (!hostnameCountInput) {
+                        console.error("Hostname count input not found");
+                        return;
+                    }
+                    
+                    hostnameCount = parseInt(hostnameCountInput.value);
+                    
+                    if (hostnameCount < 1) {
+                        alert('Please enter a valid number of hostnames to generate.');
+                        return;
+                    }
+                    
+                    // Store the hostname count in formData
+                    formData.hostnameCount = hostnameCount;
+                    
+                    // Update UI with null checks
+                    const totalHostnamesEl = document.getElementById('total-hostnames');
+                    const currentHostnameEl = document.getElementById('current-hostname');
+                    
+                    if (totalHostnamesEl) totalHostnamesEl.textContent = hostnameCount;
+                    if (currentHostnameEl) currentHostnameEl.textContent = 1;
+                    
+                    updateProgress(0);
+                    
+                    // Force display property changes with null checks
+                    if (initialFormContainer) initialFormContainer.style.display = 'none';
+                    if (hostnameFormContainer) hostnameFormContainer.style.display = 'block';
+                    
+                    // Make the first step visible
+                    const step1 = document.getElementById('step-1');
+                    if (step1) {
+                        step1.style.display = 'block';
+                    }
+                    
+                    // Force enable all controls again
+                    forceEnableAllControls();
+                    
+                } catch (error) {
+                    console.error("Error in form submission:", error);
+                    alert("An error occurred: " + error.message);
+                }
+            }
+            
+            // Function to update progress bar
+            function updateProgress(percent) {
+                const progressBar = document.getElementById('generation-progress');
+                if (progressBar) {
+                    progressBar.style.width = percent + '%';
+                    progressBar.setAttribute('aria-valuenow', percent);
+                }
+            }
+            
+            // Set up zone selection with dynamic input fields
+            const zoneDropdown = document.getElementById('{{ hostname_form.zone.id_for_label }}');
+            if (zoneDropdown) {
+                // Create container for the zone input field if not exists
+                let zoneInputContainer = document.getElementById('zone-input-container');
+                if (!zoneInputContainer) {
+                    zoneInputContainer = document.createElement('div');
+                    zoneInputContainer.id = 'zone-input-container';
+                    zoneInputContainer.className = 'form-group mt-3';
+                    zoneInputContainer.style.display = 'none';
+                    
+                    // Create the input field
+                    const zoneInput = document.createElement('input');
+                    zoneInput.type = 'text';
+                    zoneInput.id = 'zone-input';
+                    zoneInput.className = 'form-control';
+                    zoneInput.placeholder = 'Enter zone name';
+                    
+                    // Create label
+                    const zoneLabel = document.createElement('label');
+                    zoneLabel.htmlFor = 'zone-input';
+                    zoneLabel.textContent = 'Zone Name:';
+                    
+                    // Add elements to container
+                    zoneInputContainer.appendChild(zoneLabel);
+                    zoneInputContainer.appendChild(zoneInput);
+                    
+                    // Add the container after the zone dropdown
+                    const zoneFormGroup = zoneDropdown.closest('.form-group');
+                    if (zoneFormGroup && zoneFormGroup.parentNode) {
+                        zoneFormGroup.parentNode.insertBefore(zoneInputContainer, zoneFormGroup.nextSibling);
+                    } else {
+                        // Fallback - find step-3 and append to it
+                        const step3 = document.getElementById('step-3');
+                        if (step3) {
+                            step3.appendChild(zoneInputContainer);
+                        }
+                    }
+                }
+                
+                // Add event listener to the zone dropdown
+                zoneDropdown.addEventListener('change', function() {
+                    const selectedZone = this.value;
+                    const zoneInputContainer = document.getElementById('zone-input-container');
+                    const zoneInput = document.getElementById('zone-input');
+                    
+                    // Store the selected zone type
+                    formData.zoneType = selectedZone;
+                    
+                    // Show/hide input field based on selection
+                    if (selectedZone === 'A' || selectedZone === 'B') {
+                        if (zoneInputContainer) {
+                            zoneInputContainer.style.display = 'block';
+                        }
+                        if (zoneInput) {
+                            zoneInput.setAttribute('required', 'required');
+                        }
+                    } else {
+                        if (zoneInputContainer) {
+                            zoneInputContainer.style.display = 'none';
+                        }
+                        if (zoneInput) {
+                            zoneInput.removeAttribute('required');
+                            // Clear the value when hiding
+                            zoneInput.value = '';
+                        }
+                    }
+                    
+                    // Update the formData
+                    formData.zoneValue = '';
+                    
+                    // Add event listener to the zone input field if it exists
+                    if (zoneInput) {
+                        zoneInput.addEventListener('input', function() {
+                            formData.zoneValue = this.value;
+                        });
+                    }
+                });
+            }
+            
+            // Universal function to set up a step navigation button
+            function setupStepButton(buttonId, action) {
+                const button = document.getElementById(buttonId);
+                if (!button) {
+                    console.warn(`Button with ID ${buttonId} not found`);
+                    return;
+                }
+                
+                // Force enable the button
+                button.removeAttribute('disabled');
+                button.classList.remove('disabled');
+                
+                // Clear any existing event listeners
+                const newButton = button.cloneNode(true);
+                button.parentNode.replaceChild(newButton, button);
+                
+                newButton.addEventListener('click', function(e) {
+                    console.log(`Button ${buttonId} clicked`);
+                    e.preventDefault();
+                    action(this);
+                });
+                
+                console.log(`Button ${buttonId} set up and enabled`);
+            }
+            
+            // Handle hardware type selection
+            const hardwareTypeDropdown = document.getElementById('{{ hostname_form.hardware_type.id_for_label }}');
+            if (hardwareTypeDropdown) {
+                hardwareTypeDropdown.addEventListener('change', function() {
+                    // Store the hardware type
+                    formData.hardwareType = this.value;
+                    
+                    // Enable the Next button after hardware type is selected
+                    const step4NextButtons = document.querySelectorAll('#step-4 button.btn-next');
+                    step4NextButtons.forEach(button => {
+                        button.removeAttribute('disabled');
+                        button.classList.remove('disabled');
+                    });
+                });
+            }
+            
+            // Set up each next button with a specific action
+            setupStepButton('step-1-next', function(button) {
+                const step1 = document.getElementById('step-1');
+                const step2 = document.getElementById('step-2');
+                
+                // Check if DMZ is selected
+                const dmzDropdown = document.getElementById('{{ hostname_form.is_dmz.id_for_label }}');
+                if (dmzDropdown && !dmzDropdown.value) {
+                    // Show warning message or create one if it doesn't exist
+                    let warningMessage = document.getElementById('dmz-warning-message');
+                    if (!warningMessage) {
+                        warningMessage = document.createElement('div');
+                        warningMessage.id = 'dmz-warning-message';
+                        warningMessage.className = 'alert alert-warning mt-2';
+                        warningMessage.textContent = 'Please select whether the host is in DMZ before proceeding.';
+                        
+                        // Find a place to add the warning
+                        const dmzFormGroup = dmzDropdown.closest('.form-group') || step1;
+                        dmzFormGroup.appendChild(warningMessage);
+                    }
+                    warningMessage.style.display = 'block';
+                    return; // Don't proceed to next step
+                }
+                
+                // Store the DMZ value
+                if (dmzDropdown) {
+                    formData.isDmz = dmzDropdown.value === 'True';
+                }
+                
+                // Hide step 1 and show step 2
+                if (step1 && step2) {
+                    step1.style.display = 'none';
+                    step2.style.display = 'block';
+                    forceEnableAllControls();
+                } else {
+                    console.error("Could not find step-1 or step-2 elements");
+                }
+            });
+            
+            setupStepButton('step-2-next', function(button) {
+                const step2 = document.getElementById('step-2');
+                const step3 = document.getElementById('step-3');
+                
+                // Check if datacenter is selected
+                const datacenterDropdown = document.getElementById('{{ hostname_form.datacenter.id_for_label }}');
+                if (datacenterDropdown && !datacenterDropdown.value) {
+                    alert('Please select a datacenter before proceeding.');
+                    return;
+                }
+                
+                // Store the datacenter value
+                if (datacenterDropdown) {
+                    formData.datacenter = datacenterDropdown.value;
+                }
+                
+                // Hide step 2 and show step 3
+                if (step2 && step3) {
+                    step2.style.display = 'none';
+                    step3.style.display = 'block';
+                    forceEnableAllControls();
+                } else {
+                    console.error("Could not find step-2 or step-3 elements");
+                }
+            });
+            
+            setupStepButton('step-3-next', function(button) {
+                const step3 = document.getElementById('step-3');
+                const step4 = document.getElementById('step-4');
+                
+                // Validate zone selection
+                const zoneDropdown = document.getElementById('{{ hostname_form.zone.id_for_label }}');
+                if (zoneDropdown && !zoneDropdown.value) {
+                    alert('Please select a zone before proceeding.');
+                    return;
+                }
+                
+                // Check if zone input is required and filled
+                if ((zoneDropdown.value === 'A' || zoneDropdown.value === 'B')) {
+                    const zoneInput = document.getElementById('zone-input');
+                    if (!zoneInput || !zoneInput.value.trim()) {
+                        alert('Please enter a zone name before proceeding.');
+                        return;
+                    }
+                    
+                    // Store zone input value
+                    formData.zoneValue = zoneInput.value.trim();
+                }
+                
+                if (step3 && step4) {
+                    step3.style.display = 'none';
+                    step4.style.display = 'block';
+                    forceEnableAllControls();
+                } else {
+                    console.error("Could not find step-3 or step-4 elements");
+                }
+            });
+            
+            // SPECIAL FOCUS ON STEP 4 NEXT BUTTON - Multiple ways to handle it
+            setupStepButton('step-4-next', function(button) {
+                console.log("step-4-next button clicked via ID");
+                handleStep4Next();
+            });
+            
+            // Backup: Find step 4 next button by any means necessary
+            function findAndSetupStep4NextButton() {
+                console.log("Finding step-4-next button by alternative methods");
+                
+                // Try by ID first
+                let step4NextButton = document.getElementById('step-4-next');
+                
+                // If not found by ID, try by other attributes
+                if (!step4NextButton) {
+                    // Try finding by selector inside step-4
+                    const step4 = document.getElementById('step-4');
+                    if (step4) {
+                        // Try to find button with class btn-next
+                        step4NextButton = step4.querySelector('.btn-next');
+                        
+                        // If still not found, try to find any button with "Next" text
+                        if (!step4NextButton) {
+                            const buttons = step4.querySelectorAll('button');
+                            for (let btn of buttons) {
+                                if (btn.textContent.trim().includes('Next')) {
+                                    step4NextButton = btn;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // If found by any method, set it up
+                if (step4NextButton) {
+                    console.log("Found step-4-next button:", step4NextButton.id || step4NextButton.textContent.trim());
+                    
+                    // Enable the button
+                    step4NextButton.removeAttribute('disabled');
+                    step4NextButton.classList.remove('disabled');
+                    
+                    // Setup the button with direct event handlers
+                    step4NextButton.onclick = function(e) {
+                        if (e) e.preventDefault();
+                        console.log("Step 4 next button clicked (via onclick)");
+                        handleStep4Next();
+                    };
+                    
+                    step4NextButton.addEventListener('click', function(e) {
+                        if (e) e.preventDefault();
+                        console.log("Step 4 next button clicked (via addEventListener)");
+                        handleStep4Next();
+                    });
+                } else {
+                    console.error("Could not find step-4-next button by any method");
+                    
+                    // As a last resort, create a new next button
+                    createFallbackNextButton();
+                }
+            }
+            
+            // Create a fallback button if none can be found
+            function createFallbackNextButton() {
+                console.log("Creating fallback Next button for step 4");
+                const step4 = document.getElementById('step-4');
+                if (step4) {
+                    // Find a place to add the button - typically at the end
+                    const buttonContainer = step4.querySelector('.button-container') || step4;
+                    
+                    // Create a new next button
+                    const nextButton = document.createElement('button');
+                    nextButton.id = 'step-4-next-fallback';
+                    nextButton.className = 'btn btn-primary btn-next';
+                    nextButton.textContent = 'Next';
+                    nextButton.style.marginLeft = '10px';
+                    
+                    // Add click handler
+                    nextButton.addEventListener('click', function(e) {
+                        e.preventDefault();
+                        console.log("Fallback step 4 next button clicked");
+                        handleStep4Next();
+                    });
+                    
+                    // Add button to the form
+                    buttonContainer.appendChild(nextButton);
+                    
+                    console.log("Fallback next button created and added to step 4");
+                }
+            }
+            
+            // Common function to handle step 4 to step 5 transition
+            function handleStep4Next() {
+                const step4 = document.getElementById('step-4');
+                const step5 = document.getElementById('step-5');
+                
+                // Validate hardware type selection
+                const hardwareTypeDropdown = document.getElementById('{{ hostname_form.hardware_type.id_for_label }}');
+                if (hardwareTypeDropdown && !hardwareTypeDropdown.value) {
+                    alert('Please select a hardware type before proceeding.');
+                    return;
+                }
+                
+                // Store hardware type
+                if (hardwareTypeDropdown) {
+                    formData.hardwareType = hardwareTypeDropdown.value;
+                }
+                
+                // Transition to next step
+                if (step4 && step5) {
+                    step4.style.display = 'none';
+                    step5.style.display = 'block';
+                    forceEnableAllControls();
+                    console.log("Transitioned from step 4 to step 5");
+                } else {
+                    console.error("Could not find step-4 or step-5 elements");
+                }
+            }
+            
+            setupStepButton('step-2-prev', function(button) {
+                const step1 = document.getElementById('step-1');
+                const step2 = document.getElementById('step-2');
+                
+                if (step1 && step2) {
+                    step2.style.display = 'none';
+                    step1.style.display = 'block';
+                    forceEnableAllControls();
+                }
+            });
+            
+            setupStepButton('step-3-prev', function(button) {
+                const step2 = document.getElementById('step-2');
+                const step3 = document.getElementById('step-3');
+                
+                if (step2 && step3) {
+                    step3.style.display = 'none';
+                    step2.style.display = 'block';
+                    forceEnableAllControls();
+                }
+            });
+            
+            setupStepButton('step-4-prev', function(button) {
+                const step3 = document.getElementById('step-3');
+                const step4 = document.getElementById('step-4');
+                
+                if (step3 && step4) {
+                    step4.style.display = 'none';
+                    step3.style.display = 'block';
+                    forceEnableAllControls();
+                }
+            });
+            
+            setupStepButton('step-5-prev', function(button) {
+                const step4 = document.getElementById('step-4');
+                const step5 = document.getElementById('step-5');
+                
+                if (step4 && step5) {
+                    step5.style.display = 'none';
+                    step4.style.display = 'block';
+                    forceEnableAllControls();
+                }
+            });
+            
+            // Set up form submission
+            const finalSubmitButton = document.getElementById('submit-hostname');
+            if (finalSubmitButton) {
+                finalSubmitButton.removeAttribute('disabled');
+                finalSubmitButton.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    console.log("Final submit button clicked");
+                    // Add your submission logic here
+                });
+            }
+            
+            // Call our special function to find and setup step 4 next button
+            findAndSetupStep4NextButton();
+            
+            // Force enable controls on page load
+            window.addEventListener('load', function() {
+                console.log("Window loaded - ensuring all controls are enabled");
+                forceEnableAllControls();
+                findAndSetupStep4NextButton(); // Try again after full load
+            });
+            
+            // Additional fallback - add click handlers to all possible elements
+            document.addEventListener('click', function(e) {
+                const target = e.target;
+                
+                // Check if the clicked element is inside step-4 and might be a next button
+                if (target.closest('#step-4') && 
+                   (target.classList.contains('btn-next') || 
+                    target.textContent.trim().includes('Next'))) {
+                    
+                    console.log("Captured click on potential step 4 next button:", target.id || target.textContent.trim());
+                    e.preventDefault();
+                    handleStep4Next();
+                }
+            });
+            
+            // Include the rest of your JavaScript functions for hostname generation...
+            
+        } catch (error) {
+            console.error("Error in document ready:", error);
+            alert("An error occurred during page initialization: " + error.message);
+        }
+    });
+</script>
+{% endblock %}
