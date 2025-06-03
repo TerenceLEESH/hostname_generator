@@ -1,0 +1,102 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hostname Generated</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+</head>
+<body>
+    <div class="container mt-5">
+        {% if clustername %}
+        <div class="card mb-4">
+            <div class="card-header bg-primary text-white">
+                <h2>Cluster Name Generated</h2>
+            </div>
+            <div class="card-body">
+                <h3>Your new cluster name:</h3>
+                <div class="alert alert-info">
+                    <h4 class="text-center">{{ clustername }}</h4>
+                </div>
+                <p>This cluster name has been validated and saved to the database.</p>
+            </div>
+        </div>
+        {% endif %}
+        
+        <div class="card">
+            <div class="card-header bg-success text-white">
+                <h2>ESXi Hostname{{ hostname_count|pluralize }} Successfully Generated</h2>
+            </div>
+            <div class="card-body">
+                <h3>Your new hostname{{ hostname_count|pluralize }}:</h3>
+                
+                {% if hostname_count == 1 %}
+                    <div class="alert alert-info">
+                        <h4 class="text-center">{{ hostnames.0 }}</h4>
+                    </div>
+                {% else %}
+                    <div class="table-responsive">
+                        <table class="table table-striped table-bordered">
+                            <thead class="thead-dark">
+                                <tr>
+                                    <th>#</th>
+                                    <th>Hostname</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for hostname in hostnames %}
+                                    <tr>
+                                        <td>{{ forloop.counter }}</td>
+                                        <td>{{ hostname }}</td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% endif %}
+                
+                <p>These hostname{{ hostname_count|pluralize }} have been validated and saved to the database.</p>
+                
+                <div class="d-flex justify-content-between mt-4">
+                    <a href="{% url 'esxi_hostname_generator' %}" class="btn btn-primary">Generate Another Hostname</a>
+                    <button class="btn btn-outline-secondary" id="copy-btn" onclick="copyToClipboard()">
+                        Copy to Clipboard
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        function copyToClipboard() {
+            var text = "";
+            
+            {% if clustername %}
+            text += "Cluster Name: {{ clustername }}\n\n";
+            {% endif %}
+            
+            text += "ESXi Hostnames:\n";
+            {% for hostname in hostnames %}
+                text += "{{ hostname }}\n";
+            {% endfor %}
+            
+            navigator.clipboard.writeText(text)
+                .then(() => {
+                    var btn = document.getElementById('copy-btn');
+                    btn.textContent = 'Copied!';
+                    btn.classList.remove('btn-outline-secondary');
+                    btn.classList.add('btn-success');
+                    setTimeout(() => {
+                        btn.textContent = 'Copy to Clipboard';
+                        btn.classList.remove('btn-success');
+                        btn.classList.add('btn-outline-secondary');
+                    }, 2000);
+                })
+                .catch(err => {
+                    console.error('Could not copy text: ', err);
+                });
+        }
+    </script>
+</body>
+</html>

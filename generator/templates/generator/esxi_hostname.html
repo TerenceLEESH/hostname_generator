@@ -1,0 +1,407 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESXi Hostname Generator</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <style>
+        .step-indicator {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 30px;
+            position: relative;
+        }
+        
+        .step-indicator::before {
+            content: '';
+            position: absolute;
+            top: 15px;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: #e9ecef;
+            z-index: 0;
+        }
+        
+        .step {
+            position: relative;
+            z-index: 1;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background: #e9ecef;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .step.active {
+            background: #007bff;
+            color: white;
+        }
+        
+        .step.completed {
+            background: #28a745;
+            color: white;
+        }
+        
+        .question-container {
+            background: #f8f9fa;
+            border-radius: 5px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .nav-buttons {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        <h1 class="mb-4">ESXi Hostname Generator</h1>
+        
+        {% if error %}
+            <div class="alert alert-danger">{{ error }}</div>
+        {% endif %}
+        
+        <!-- Step indicators -->
+        <div class="step-indicator">
+            {% for step in steps_to_display %}
+                {% if step < current_step %}
+                    <div class="step completed">✓</div>
+                {% elif step == current_step %}
+                    <div class="step active">{{ step }}</div>
+                {% else %}
+                    <div class="step">{{ step }}</div>
+                {% endif %}
+            {% endfor %}
+        </div>
+        
+        <form method="post" id="hostname-form">
+            {% csrf_token %}
+            
+            <div class="question-container">
+                {% if current_step == 1 %}
+                    <!-- Q1: Is it under an existing cluster? -->
+                    <h4>Question 1: Cluster Information</h4>
+                    <div class="form-group">
+                        <label>Is it under an existing cluster?</label>
+                        <div class="form-check">
+                            <input type="radio" name="existing_cluster" value="True" id="id_existing_cluster_yes" class="form-check-input" required 
+                                   {% if prev_data.1.existing_cluster == "True" %}checked{% endif %}>
+                            <label class="form-check-label" for="id_existing_cluster_yes">Yes</label>
+                        </div>
+                        <div class="form-check">
+                            <input type="radio" name="existing_cluster" value="False" id="id_existing_cluster_no" class="form-check-input"
+                                   {% if prev_data.1.existing_cluster == "False" %}checked{% endif %}>
+                            <label class="form-check-label" for="id_existing_cluster_no">No</label>
+                        </div>
+                    </div>
+                
+                {% elif current_step == 2 %}
+                    <!-- Q2: OSA or ESA? (Only if Q1 was No) -->
+                    <h4>Question 2: Service Architecture</h4>
+                    {% if prev_data.1.existing_cluster == "False" %}
+                        <div class="form-group">
+                            <label for="id_service_architecture">OSA or ESA?</label>
+                            <select name="service_architecture" id="id_service_architecture" class="form-control" required>
+                                <option value="">Select architecture</option>
+                                <option value="OSA" {% if prev_data.2.service_architecture == "OSA" %}selected{% endif %}>OSA</option>
+                                <option value="ESA" {% if prev_data.2.service_architecture == "ESA" %}selected{% endif %}>ESA</option>
+                            </select>
+                        </div>
+                    {% else %}
+                        <p>Since this is under an existing cluster, we'll skip architecture and zone questions.</p>
+                        <input type="hidden" name="service_architecture" value="">
+                    {% endif %}
+                
+                {% elif current_step == 3 %}
+                    <!-- Q3: Which zone? (Only if Q1 was No) -->
+                    <h4>Question 3: Zone</h4>
+                    {% if prev_data.1.existing_cluster == "False" %}
+                        <div class="form-group">
+                            <label for="id_zone">Which zone it belongs to?</label>
+                            <select name="zone" id="id_zone" class="form-control" required>
+                                <option value="">Select zone</option>
+                                <option value="A" {% if prev_data.3.zone == "A" %}selected{% endif %}>A</option>
+                                <option value="B" {% if prev_data.3.zone == "B" %}selected{% endif %}>B</option>
+                                <option value="C" {% if prev_data.3.zone == "C" %}selected{% endif %}>C</option>
+                                <option value="D" {% if prev_data.3.zone == "D" %}selected{% endif %}>D</option>
+                                <option value="E" {% if prev_data.3.zone == "E" %}selected{% endif %}>E</option>
+                            </select>
+                        </div>
+                    {% else %}
+                        <p>Since this is under an existing cluster, we'll skip architecture and zone questions.</p>
+                        <input type="hidden" name="zone" value="">
+                    {% endif %}
+                
+                {% elif current_step == 4 %}
+                    <!-- Q4: How many ESXi hostnames? -->
+                    <h4>Question 4: Hostname Count</h4>
+                    <div class="form-group">
+                        <label for="id_hostname_count">How many ESXi hostnames do you need?</label>
+                        <input type="number" name="hostname_count" id="id_hostname_count" class="form-control" min="1" max="100" required
+                               value="{{ prev_data.4.hostname_count|default:'1' }}">
+                    </div>
+                
+                {% elif current_step == 5 %}
+                    <!-- Q5: Select the datacenter -->
+                    <h4>Question 5: Datacenter</h4>
+                    <div class="form-group">
+                        <label for="id_datacenter">Select the datacenter:</label>
+                        <select name="datacenter" id="id_datacenter" class="form-control" required>
+                            <option value="">Select datacenter</option>
+                            {% for dc in datacenters %}
+                                <option value="{{ dc.datacenter }}" 
+                                        data-sitecode="{{ dc.sitecode }}" 
+                                        {% if prev_data.5.datacenter == dc.datacenter %}selected{% endif %}>
+                                    {{ dc.datacenter }} ({{ dc.sitecode }})
+                                </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                
+                {% elif current_step == 6 %}
+                    <!-- Q6: Is this host in DMZ? -->
+                    <h4>Question 6: DMZ Status</h4>
+                    <div class="form-group">
+                        <label>Is this host in DMZ?</label>
+                        <div class="form-check">
+                            <input type="radio" name="is_dmz" value="True" id="id_is_dmz_yes" class="form-check-input" required 
+                                   {% if prev_data.6.is_dmz == "True" %}checked{% endif %}>
+                            <label class="form-check-label" for="id_is_dmz_yes">Yes</label>
+                        </div>
+                        <div class="form-check">
+                            <input type="radio" name="is_dmz" value="False" id="id_is_dmz_no" class="form-check-input"
+                                   {% if prev_data.6.is_dmz == "False" %}checked{% endif %}>
+                            <label class="form-check-label" for="id_is_dmz_no">No</label>
+                        </div>
+                    </div>
+                
+                {% elif current_step == 7 %}
+                    <!-- Q7: Hardware type -->
+                    <h4>Question 7: Hardware Type</h4>
+                    {% if prev_data.6.is_dmz == "False" %}
+                        <div class="form-group">
+                            <label for="id_hardware_type">Hardware type:</label>
+                            <select name="hardware_type" id="id_hardware_type" class="form-control" required>
+                                <option value="">Select hardware type</option>
+                                <option value="Dell" {% if prev_data.7.hardware_type == "Dell" %}selected{% endif %}>Dell</option>
+                                <option value="HP" {% if prev_data.7.hardware_type == "HP" %}selected{% endif %}>HP</option>
+                            </select>
+                        </div>
+                    {% else %}
+                        <p>For DMZ hosts, special configuration will be applied.</p>
+                        <input type="hidden" name="hardware_type" value="DMZ">
+                    {% endif %}
+                
+                {% elif current_step == 8 %}
+                    <!-- Q8: Select cloud code -->
+                    <h4>Question 8: Cloud Code</h4>
+                    <div class="form-group">
+                        <label for="id_cloud_code">Select the cloud code:</label>
+                        <select name="cloud_code" id="id_cloud_code" class="form-control" required>
+                            <option value="">Select cloud code</option>
+                            <option value="QQA" {% if prev_data.8.cloud_code == "QQA" %}selected{% endif %}>QQA</option>
+                            <option value="QQB" {% if prev_data.8.cloud_code == "QQB" %}selected{% endif %}>QQB</option>
+                            <option value="QQC" {% if prev_data.8.cloud_code == "QQC" %}selected{% endif %}>QQC</option>
+                        </select>
+                    </div>
+                
+                {% elif current_step == 9 %}
+                    <!-- Q9: Select zone type -->
+                    <h4>Question 9: Zone Type</h4>
+                    <div class="form-group">
+                        <label for="id_zone_type">Select the zone type:</label>
+                        <select name="zone_type" id="id_zone_type" class="form-control" required>
+                            <option value="">Select zone type</option>
+                            <option value="AAA" {% if prev_data.9.zone_type == "AAA" %}selected{% endif %}>AAA</option>
+                            <option value="BBB" {% if prev_data.9.zone_type == "BBB" %}selected{% endif %}>BBB</option>
+                            <option value="CCC" {% if prev_data.9.zone_type == "CCC" %}selected{% endif %}>CCC</option>
+                        </select>
+                    </div>
+
+                    <!-- Preview section for the final step -->
+                    <div class="mt-4">
+                        <h5>Preview:</h5>
+                        {% if prev_data.1.existing_cluster == "False" %}
+                            <div class="mb-3">
+                                <label>Cluster Name:</label>
+                                <div class="alert alert-primary" id="cluster-preview">
+                                    Cluster name will be generated
+                                </div>
+                            </div>
+                        {% endif %}
+                        <div>
+                            <label>ESXi Hostname:</label>
+                            <div class="alert alert-info" id="hostname-preview">
+                                Hostname will be generated based on your selections
+                            </div>
+                        </div>
+                    </div>
+                {% endif %}
+                
+                <!-- Show summary of previous answers -->
+                {% if current_step > 1 %}
+                    <div class="previous-answers mt-4">
+                        <h5>Your previous answers:</h5>
+                        <ul class="list-group">
+                            {% if current_step > 1 and prev_data.1 %}
+                                <li class="list-group-item">
+                                    <strong>Existing cluster:</strong> 
+                                    {% if prev_data.1.existing_cluster == "True" %}Yes{% else %}No{% endif %}
+                                </li>
+                            {% endif %}
+                            
+                            {% if current_step > 2 and prev_data.2 and prev_data.1.existing_cluster == "False" %}
+                                <li class="list-group-item">
+                                    <strong>Service architecture:</strong> {{ prev_data.2.service_architecture }}
+                                </li>
+                            {% endif %}
+                            
+                            {% if current_step > 3 and prev_data.3 and prev_data.1.existing_cluster == "False" %}
+                                <li class="list-group-item">
+                                    <strong>Zone:</strong> {{ prev_data.3.zone }}
+                                </li>
+                            {% endif %}
+                            
+                            {% if current_step > 4 and prev_data.4 %}
+                                <li class="list-group-item">
+                                    <strong>Hostname count:</strong> {{ prev_data.4.hostname_count }}
+                                </li>
+                            {% endif %}
+                            
+                            {% if current_step > 5 and prev_data.5 %}
+                                <li class="list-group-item">
+                                    <strong>Datacenter:</strong> {{ prev_data.5.datacenter }}
+                                </li>
+                            {% endif %}
+                            
+                            {% if current_step > 6 and prev_data.6 %}
+                                <li class="list-group-item">
+                                    <strong>DMZ host:</strong> 
+                                    {% if prev_data.6.is_dmz == "True" %}Yes{% else %}No{% endif %}
+                                </li>
+                            {% endif %}
+                            
+                            {% if current_step > 7 and prev_data.7 and prev_data.6.is_dmz == "False" %}
+                                <li class="list-group-item">
+                                    <strong>Hardware type:</strong> {{ prev_data.7.hardware_type }}
+                                </li>
+                            {% endif %}
+                            
+                            {% if current_step > 8 and prev_data.8 %}
+                                <li class="list-group-item">
+                                    <strong>Cloud code:</strong> {{ prev_data.8.cloud_code }}
+                                </li>
+                            {% endif %}
+                        </ul>
+                    </div>
+                {% endif %}
+            </div>
+            
+            <div class="nav-buttons">
+                {% if current_step > 1 %}
+                    <button type="submit" name="prev_step" class="btn btn-secondary">Previous</button>
+                {% else %}
+                    <div></div> <!-- Empty div for spacing -->
+                {% endif %}
+                
+                {% if current_step < 9 %}
+                    {% if current_step == 6 and prev_data.6.is_dmz == "True" %}
+                        <button type="submit" name="submit" class="btn btn-success">Generate Hostname</button>
+                    {% else %}
+                        <button type="submit" name="next_step" class="btn btn-primary">Next</button>
+                    {% endif %}
+                {% else %}
+                    <button type="submit" name="submit" class="btn btn-success">Generate Hostname</button>
+                {% endif %}
+            </div>
+        </form>
+    </div>
+    
+    <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
+    <script>
+        $(document).ready(function() {
+            // Skip to Q4 if cluster = Yes on step 1
+            {% if current_step == 1 %}
+                $('input[name="existing_cluster"]').change(function() {
+                    if ($(this).val() === 'True') {
+                        $('#hostname-form').append('<div class="alert alert-info mt-3" id="step-skip-info">You will skip directly to hostname count question.</div>');
+                    } else {
+                        $('#step-skip-info').remove();
+                    }
+                });
+            {% endif %}
+            
+            // Generate button on Q6 if DMZ = Yes
+            {% if current_step == 6 %}
+                $('input[name="is_dmz"]').change(function() {
+                    if ($(this).val() === 'True') {
+                        $('.nav-buttons').html('<div></div><button type="submit" name="submit" class="btn btn-success">Generate Hostname</button>');
+                        $('#hostname-form').append('<div class="alert alert-info mt-3" id="dmz-info">DMZ hosts will have special configuration applied. You can generate hostnames now.</div>');
+                    } else {
+                        $('.nav-buttons').html('<button type="submit" name="prev_step" class="btn btn-secondary">Previous</button><button type="submit" name="next_step" class="btn btn-primary">Next</button>');
+                        $('#dmz-info').remove();
+                    }
+                });
+                
+                // Initialize on page load
+                if ($('#id_is_dmz_yes').is(':checked')) {
+                    $('#id_is_dmz_yes').trigger('change');
+                } else if ($('#id_is_dmz_no').is(':checked')) {
+                    $('#id_is_dmz_no').trigger('change');
+                }
+            {% endif %}
+            
+            // Update preview on final step
+            {% if current_step == 9 %}
+                function updatePreview() {
+                    var zoneType = $('#id_zone_type').val() || '[Zone Type]';
+                    var cloudCode = "{{ prev_data.8.cloud_code|default:'QQ' }}";
+                    var datacenter = "{{ prev_data.5.datacenter|default:'DC' }}";
+                    var isDmz = "{{ prev_data.6.is_dmz|default:'False' }}";
+                    var hardwareType = "{{ prev_data.7.hardware_type|default:'HW' }}";
+                    var existingCluster = "{{ prev_data.1.existing_cluster|default:'False' }}";
+                    var architecture = "{{ prev_data.2.service_architecture|default:'' }}";
+                    var zone = "{{ prev_data.3.zone|default:'' }}";
+                    var sitecode = "[Site]"; // You'd need to look this up based on datacenter
+                    
+                    // ESXi Hostname preview
+                    var preview = 'ESXI-';
+                    if (isDmz === "True") {
+                        preview += 'DMZ-';
+                    } else {
+                        preview += hardwareType + '-';
+                    }
+                    
+                    preview += cloudCode + '-' + zoneType + '-';
+                    
+                    if (existingCluster === "False") {
+                        preview += architecture + '-' + zone + '-';
+                    }
+                    
+                    preview += sitecode + '-01';
+                    
+                    $('#hostname-preview').text(preview);
+                    
+                    // Cluster name preview (if creating a new cluster)
+                    if (existingCluster === "False") {
+                        var clusterPreview = 'CLS-' + cloudCode + '-' + zoneType + '-';
+                        clusterPreview += architecture + '-' + zone + '-' + sitecode + '-PR01';
+                        $('#cluster-preview').text(clusterPreview);
+                    }
+                }
+                
+                $('#id_zone_type').change(updatePreview);
+                updatePreview();
+            {% endif %}
+        });
+    </script>
+</body>
+</html>
