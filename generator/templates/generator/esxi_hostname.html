@@ -210,7 +210,17 @@
                             <option value="QQA" {% if prev_data.8.cloud_code == "QQA" %}selected{% endif %}>QQA</option>
                             <option value="QQB" {% if prev_data.8.cloud_code == "QQB" %}selected{% endif %}>QQB</option>
                             <option value="QQC" {% if prev_data.8.cloud_code == "QQC" %}selected{% endif %}>QQC</option>
+                            <option value="custom" {% if prev_data.8.cloud_code != "QQA" and prev_data.8.cloud_code != "QQB" and prev_data.8.cloud_code != "QQC" and prev_data.8.cloud_code %}selected{% endif %}>Custom (specify)</option>
                         </select>
+                    </div>
+                    
+                    <!-- Custom cloud code input field (shown/hidden with JS) -->
+                    <div class="form-group" id="custom_cloud_code_group" style="display: none;">
+                        <label for="id_custom_cloud_code">Enter custom cloud code:</label>
+                        <input type="text" name="custom_cloud_code" id="id_custom_cloud_code" 
+                               class="form-control" maxlength="10" 
+                               value="{% if prev_data.8.cloud_code != 'QQA' and prev_data.8.cloud_code != 'QQB' and prev_data.8.cloud_code != 'QQC' %}{{ prev_data.8.cloud_code }}{% endif %}">
+                        <small class="form-text text-muted">Please enter a custom cloud code (max 10 characters)</small>
                     </div>
                 
                 {% elif current_step == 9 %}
@@ -363,7 +373,12 @@
             {% if current_step == 9 %}
                 function updatePreview() {
                     var zoneType = $('#id_zone_type').val() || '[Zone Type]';
-                    var cloudCode = "{{ prev_data.8.cloud_code|default:'QQ' }}";
+                    var cloudCode;
+                    if ("{{ prev_data.8.cloud_code }}" === "custom") {
+                        cloudCode = "{{ prev_data.8.custom_cloud_code }}";
+                    } else {
+                        cloudCode = "{{ prev_data.8.cloud_code|default:'QQ' }}";
+                    }
                     var datacenter = "{{ prev_data.5.datacenter|default:'DC' }}";
                     var isDmz = "{{ prev_data.6.is_dmz|default:'False' }}";
                     var hardwareType = "{{ prev_data.7.hardware_type|default:'HW' }}";
@@ -400,6 +415,53 @@
                 
                 $('#id_zone_type').change(updatePreview);
                 updatePreview();
+            {% endif %}
+            
+            // Show/hide custom cloud code input
+            $('#id_cloud_code').change(function() {
+                if ($(this).val() === 'custom') {
+                    $('#custom_cloud_code_group').show();
+                } else {
+                    $('#custom_cloud_code_group').hide();
+                }
+            });
+            
+            // Initialize custom cloud code visibility
+            if ($('#id_cloud_code').val() === 'custom') {
+                $('#custom_cloud_code_group').show();
+            } else {
+                $('#custom_cloud_code_group').hide();
+            }
+        });
+    </script>
+    <script>
+        $(document).ready(function() {
+            // Handle showing/hiding the custom cloud code field
+            function toggleCustomCloudCode() {
+                if ($('#id_cloud_code').val() === 'custom') {
+                    $('#custom_cloud_code_group').show();
+                    $('#id_custom_cloud_code').prop('required', true);
+                } else {
+                    $('#custom_cloud_code_group').hide();
+                    $('#id_custom_cloud_code').prop('required', false);
+                }
+            }
+            
+            // Call on page load and when the select changes
+            $('#id_cloud_code').change(toggleCustomCloudCode);
+            toggleCustomCloudCode();
+            
+            // Show custom field if custom option is selected or if a custom value is present
+            {% if current_step == 8 %}
+                if ($('#id_cloud_code').val() === 'custom' || 
+                    ("{{ prev_data.8.cloud_code }}" !== "QQA" && 
+                     "{{ prev_data.8.cloud_code }}" !== "QQB" && 
+                     "{{ prev_data.8.cloud_code }}" !== "QQC" && 
+                     "{{ prev_data.8.cloud_code }}")) {
+                    $('#id_cloud_code').val('custom');
+                    $('#custom_cloud_code_group').show();
+                    $('#id_custom_cloud_code').prop('required', true);
+                }
             {% endif %}
         });
     </script>

@@ -138,12 +138,17 @@ def esxi_hostname_generator(request):
             # Save current step data to session
             request.session[f'step_{current_step}_data'] = request.POST.dict()
             
-            # Special case: If on step 1 and existing_cluster is True, skip to step 4
-            if current_step == 1 and request.POST.get('existing_cluster') == 'True':
-                current_step = 4  # Skip questions 2 and 3
+            # Special handling for custom cloud code (if on step 8)
+            if current_step == 8 and request.POST.get('cloud_code') == 'custom':
+                custom_code = request.POST.get('custom_cloud_code')
+                if custom_code:
+                    # Update the session data to use the custom value directly
+                    data = request.session[f'step_{current_step}_data']
+                    data['cloud_code'] = custom_code
+                    request.session[f'step_{current_step}_data'] = data
+            
             # Standard next step
-            else:
-                current_step += 1
+            current_step += 1
                 
             request.session['current_step'] = current_step
             

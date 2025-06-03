@@ -53,7 +53,15 @@ class HostnameQuestionnaireForm(forms.Form):
     # Question 8: Select the cloud code
     cloud_code = forms.ChoiceField(
         label="Select the cloud code",
-        choices=[('QQA', 'QQA'), ('QQB', 'QQB'), ('QQC', 'QQC')]
+        choices=[('QQA', 'QQA'), ('QQB', 'QQB'), ('QQC', 'QQC'), ('custom', 'Custom (specify)')]
+    )
+    
+    # Custom cloud code field for when "Custom" is selected in Question 8
+    custom_cloud_code = forms.CharField(
+        label="Enter custom cloud code",
+        max_length=10,
+        required=False,
+        help_text="Please enter a custom cloud code (max 10 characters)"
     )
     
     # Question 9: Select the zone type
@@ -97,5 +105,16 @@ class HostnameQuestionnaireForm(forms.Form):
         # If not DMZ, require hardware_type
         if is_dmz is False and not cleaned_data.get('hardware_type'):
             self.add_error('hardware_type', 'Hardware type is required for non-DMZ hosts.')
+        
+        # Validate custom cloud code if custom option is selected
+        cloud_code = cleaned_data.get('cloud_code')
+        custom_cloud_code = cleaned_data.get('custom_cloud_code')
+        
+        if cloud_code == 'custom':
+            if not custom_cloud_code:
+                self.add_error('custom_cloud_code', 'Please enter a custom cloud code.')
+            else:
+                # Store the custom value in cloud_code for easier processing later
+                cleaned_data['cloud_code'] = custom_cloud_code
         
         return cleaned_data
