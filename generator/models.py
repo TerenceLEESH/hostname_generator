@@ -2,6 +2,7 @@ from django.db import models
 import pandas as pd
 import os
 import datetime
+import re
 
 # Mock data for existing hostnames
 EXISTING_HOSTNAMES = [
@@ -54,7 +55,18 @@ EXISTING_HOSTNAMES = [
     "ESXI-DMZ-QQC-BBB-MI01-05",
     "ESXI-DMZ-QQC-BBB-MI01-06",
     "ESXI-Dell-QQA-CCC-OSA-A-LO01-05",
-    "ESXI-Dell-QQA-CCC-OSA-A-LO01-06"
+    "ESXI-Dell-QQA-CCC-OSA-A-LO01-06",
+    # Add some DMZ format hostnames
+    "vny01u111swea001",
+    "vny01u111swea002",
+    "vsf01u111swea001",
+    # Add some non-DMZ format hostnames
+    "l-vny01dqqaaaa0001",
+    "l-vny01dqqaaaa0002",
+    "l-vsf01hqqbaaa0001",
+    "l-vch01dqqcccc0001",
+    "l-vdl01hqqabbb0001",
+    "l-vmi01dqqbccc0001"
 ]
 
 class HostnameManager:
@@ -113,6 +125,68 @@ class HostnameManager:
         return clustername in df['clustername'].values
     
     @classmethod
+    def find_next_hostname_number(cls, hostname_prefix):
+        """
+        Find the next available number for a hostname with the given prefix
+        Support both 3-digit (DMZ) and 4-digit (non-DMZ) formats
+        """
+        df = cls.get_existing_hostnames_df()
+        
+        # Check if any hostnames start with the given prefix
+        matching_hostnames = df[df['hostname'].str.startswith(hostname_prefix, na=False)]
+        
+        if matching_hostnames.empty:
+            # If no hostname with this prefix exists, start with 1
+            return 1
+        
+        # Extract numbers from the matching hostnames
+        numbers = []
+        pattern = re.compile(f'^{re.escape(hostname_prefix)}(\\d+)$')
+        
+        for hostname in matching_hostnames['hostname']:
+            match = pattern.match(hostname)
+            if match:
+                numbers.append(int(match.group(1)))
+        
+        if not numbers:
+            return 1  # No valid numbers found, start with 1
+            
+        return max(numbers) + 1  # Next available number
+    
+    @classmethod
+    def find_next_clustername_number(cls, cluster_prefix, purpose_code):
+        """
+        Find the next available number for a cluster with the given prefix and purpose code
+        e.g., if prefix is "CLS-QQA-AAA-OSA-A-NY01-PR" and highest is "CLS-QQA-AAA-OSA-A-NY01-PR03",
+        return 4
+        """
+        full_prefix = f"{cluster_prefix}-{purpose_code}"
+        df = cls.get_existing_clusters_df()
+        
+        if df.empty:
+            return 1  # No clusters exist yet
+            
+        # Check if any clusternames start with the given prefix
+        matching_clusters = df[df['clustername'].str.startswith(full_prefix, na=False)]
+        
+        if matching_clusters.empty:
+            return 1  # No matching clusters found, start with 1
+        
+        # Extract numbers from the matching cluster names
+        numbers = []
+        pattern = re.compile(f'^{re.escape(full_prefix)}(\\d+)$')
+        
+        for clustername in matching_clusters['clustername']:
+            match = pattern.match(clustername)
+            if match:
+                numbers.append(int(match.group(1)))
+        
+        if not numbers:
+            return 1  # No valid numbers found, start with 1
+            
+        return max(numbers) + 1  # Next available number
+    
+    @classmethod
     def add_hostname(cls, hostname):
         """Add a new hostname to the DataFrame and save to CSV"""
         df = cls.get_existing_hostnames_df()
@@ -158,6 +232,16 @@ class Hostname(models.Model):
     def validate_clustername_exists(cls, clustername):
         """Delegate to HostnameManager"""
         return HostnameManager.validate_clustername_exists(clustername)
+    
+    @classmethod
+    def find_next_hostname_number(cls, hostname_prefix):
+        """Delegate to HostnameManager"""
+        return HostnameManager.find_next_hostname_number(hostname_prefix)
+    
+    @classmethod
+    def find_next_clustername_number(cls, cluster_prefix, purpose_code):
+        """Delegate to HostnameManager"""
+        return HostnameManager.find_next_clustername_number(cluster_prefix, purpose_code)
     
     @classmethod
     def add_hostname_to_df(cls, hostname):

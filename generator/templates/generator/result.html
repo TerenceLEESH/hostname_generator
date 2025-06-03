@@ -58,6 +58,16 @@
                 
                 <p>These hostname{{ hostname_count|pluralize }} have been validated and saved to the database.</p>
                 
+                {% if is_dmz %}
+                    <div class="alert alert-warning">
+                        <strong>Note:</strong> DMZ hostnames use the format v{sitecode}u111swea with 3-digit sequence numbers.
+                    </div>
+                {% else %}
+                    <div class="alert alert-warning">
+                        <strong>Note:</strong> Non-DMZ hostnames use the format l-v{sitecode}{hardware}{cloudcode}{zonetype} with 4-digit sequence numbers.
+                    </div>
+                {% endif %}
+                
                 <div class="d-flex justify-content-between mt-4">
                     <a href="{% url 'esxi_hostname_generator' %}" class="btn btn-primary">Generate Another Hostname</a>
                     <button class="btn btn-outline-secondary" id="copy-btn" onclick="copyToClipboard()">

@@ -385,23 +385,29 @@
                     var existingCluster = "{{ prev_data.1.existing_cluster|default:'False' }}";
                     var architecture = "{{ prev_data.2.service_architecture|default:'' }}";
                     var zone = "{{ prev_data.3.zone|default:'' }}";
-                    var sitecode = "[Site]"; // You'd need to look this up based on datacenter
+                    
+                    // Get the sitecode from datacenters
+                    var sitecode = "";
+                    {% for dc in datacenters %}
+                        if ("{{ dc.datacenter }}" === datacenter) {
+                            sitecode = "{{ dc.sitecode }}";
+                        }
+                    {% endfor %}
+                    if (!sitecode) sitecode = "[Site]";
                     
                     // ESXi Hostname preview
-                    var preview = 'ESXI-';
+                    var preview;
                     if (isDmz === "True") {
-                        preview += 'DMZ-';
+                        // DMZ format: v{sitecode}u111swea with 3-digit number
+                        preview = 'v' + sitecode.toLowerCase() + 'u111swea001';  // Starting with 001
                     } else {
-                        preview += hardwareType + '-';
+                        // Non-DMZ format: l-v{sitecode}{hardwaretype}{cloudcode}{zonetype}{4 digits}
+                        var hwCode = hardwareType === "Dell" ? "d" : (hardwareType === "HP" ? "h" : "x");
+                        var cloudCodeShort = cloudCode.toLowerCase().substring(0, 3);
+                        var zoneTypeShort = zoneType.toLowerCase().substring(0, 3);
+                        
+                        preview = 'l-v' + sitecode.toLowerCase() + hwCode + cloudCodeShort + zoneTypeShort + '0001';
                     }
-                    
-                    preview += cloudCode + '-' + zoneType + '-';
-                    
-                    if (existingCluster === "False") {
-                        preview += architecture + '-' + zone + '-';
-                    }
-                    
-                    preview += sitecode + '-01';
                     
                     $('#hostname-preview').text(preview);
                     

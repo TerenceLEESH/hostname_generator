@@ -45,34 +45,45 @@ def generate_hostnames(data, datacenters):
     datacenter_name = data.get('datacenter', '')
     datacenter_code = next((dc['sitecode'] for dc in datacenters if dc['datacenter'] == datacenter_name), 'DC')
     
-    # Determine components based on form answers
-    prefix = 'ESXI'
+    # Check if it's a DMZ host
+    is_dmz = data.get('is_dmz') == 'True'
     
-    # DMZ or hardware type
-    if data.get('is_dmz') == 'True':
-        component2 = 'DMZ'
-    else:
-        component2 = data.get('hardware_type', '')
-    
-    # Cloud code
-    component3 = data.get('cloud_code', '')
-    
-    # Zone type
-    component4 = data.get('zone_type', '')
-    
-    # If not existing cluster, add architecture and zone
-    if data.get('existing_cluster') == 'False':
-        architecture = data.get('service_architecture', '')
-        zone = data.get('zone', '')
+    if is_dmz:
+        # For DMZ hosts, use v{sitecode}u111swea format with 3-digit sequence
+        hostname_prefix = f"v{datacenter_code.lower()}u111swea"
         
-        # Generate hostnames
-        for i in range(1, count + 1):
-            hostname = f"{prefix}-{component2}-{component3}-{component4}-{architecture}-{zone}-{datacenter_code}-{i:02d}"
+        # Find the next available number for this hostname pattern (3 digits for DMZ)
+        next_number = Hostname.find_next_hostname_number(hostname_prefix)
+        
+        # Generate hostnames with 3-digit sequence
+        for i in range(0, count):
+            hostname = f"{hostname_prefix}{(next_number + i):03d}"
             hostnames.append(hostname)
     else:
-        # Generate hostnames without architecture and zone
-        for i in range(1, count + 1):
-            hostname = f"{prefix}-{component2}-{component3}-{component4}-{datacenter_code}-{i:02d}"
+        # NEW FORMAT for non-DMZ hosts: l-v{sitecode}{hardwaretype}{component3}{component4}{4 digits}
+        
+        # Get hardware type code (1 character)
+        hardware_code = get_hardware_type_code(data.get('hardware_type', ''))
+        
+        # Get cloud code
+        cloud_code = data.get('cloud_code', '').lower()
+        if len(cloud_code) > 3:  # Limit to 3 chars max
+            cloud_code = cloud_code[:3]
+        
+        # Get zone type 
+        zone_type = data.get('zone_type', '').lower()
+        if len(zone_type) > 3:  # Limit to 3 chars max
+            zone_type = zone_type[:3]
+        
+        # Build the hostname prefix
+        hostname_prefix = f"l-v{datacenter_code.lower()}{hardware_code}{cloud_code}{zone_type}"
+        
+        # Find the next available number for this hostname pattern
+        next_number = Hostname.find_next_hostname_number(hostname_prefix)
+        
+        # Generate hostnames with 4-digit sequence
+        for i in range(0, count):
+            hostname = f"{hostname_prefix}{(next_number + i):04d}"
             hostnames.append(hostname)
     
     return hostnames
@@ -264,7 +275,8 @@ def esxi_hostname_generator(request):
             return render(request, 'generator/result.html', {
                 'hostnames': saved_hostnames,
                 'hostname_count': len(saved_hostnames),
-                'clustername': clustername
+                'clustername': clustername,
+                'is_dmz': all_data.get('is_dmz') == 'True'  # Pass DMZ status
             })
     
     # Initial GET request
@@ -309,3 +321,13 @@ def validate_hostname_ajax(request):
 def index(request):
     """Alias for the esxi_hostname_generator view"""
     return esxi_hostname_generator(request)
+
+# Add this helper function
+
+def get_hardware_type_code(hardware_type):
+    """Convert full hardware type to single character code"""
+    hardware_map = {
+        'Dell': 'd',
+        'HP': 'h'
+    }
+    return hardware_map.get(hardware_type, 'x')  # Default to 'x' if unknown
