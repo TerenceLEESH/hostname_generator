@@ -1,88 +1,101 @@
 from django import forms
-from .models import Hostname
 
 class HostnameQuestionnaireForm(forms.Form):
-    # Question 1
-    is_production = forms.BooleanField(
-        label="Is this for a production environment?",
+    # Question 1: Is it under an existing cluster?
+    existing_cluster = forms.BooleanField(
+        label="Is it under an existing cluster?",
         required=False,
         widget=forms.RadioSelect(choices=[(True, 'Yes'), (False, 'No')])
     )
     
-    # Question 2 (shown only if Question 1 is No)
-    environment_type = forms.ChoiceField(
-        label="What type of environment is this?",
-        choices=[('dev', 'Development'), ('test', 'Testing'), ('staging', 'Staging')],
+    # Question 2: OSA or ESA? (Only if Q1 was No)
+    service_architecture = forms.ChoiceField(
+        label="OSA or ESA?",
+        choices=[('OSA', 'OSA'), ('ESA', 'ESA')],
         required=False
     )
     
-    # Question 3 (shown only if Question 1 is No)
-    is_temporary = forms.BooleanField(
-        label="Is this a temporary environment?",
+    # Question 3: Which zone? (Only if Q1 was No)
+    zone = forms.ChoiceField(
+        label="Which zone it belongs to?",
+        choices=[('A', 'A'), ('B', 'B'), ('C', 'C'), ('D', 'D'), ('E', 'E')],
+        required=False
+    )
+    
+    # Question 4: How many ESXi hostnames?
+    hostname_count = forms.IntegerField(
+        label="How many ESXi hostnames do you need?",
+        min_value=1,
+        max_value=100,
+        initial=1
+    )
+    
+    # Question 5: Select the datacenter
+    datacenter = forms.ChoiceField(
+        label="Select the datacenter",
+        choices=[]  # Will be populated dynamically
+    )
+    
+    # Question 6: Is this host in DMZ?
+    is_dmz = forms.BooleanField(
+        label="Is this host in DMZ?",
         required=False,
         widget=forms.RadioSelect(choices=[(True, 'Yes'), (False, 'No')])
     )
     
-    # Questions 4-6 (always shown)
-    application_name = forms.CharField(
-        label="What is the application name?",
-        max_length=100
+    # Question 7: Hardware type (Only if Q6 was No)
+    hardware_type = forms.ChoiceField(
+        label="Hardware type",
+        choices=[('Dell', 'Dell'), ('HP', 'HP')],
+        required=False
     )
     
-    region = forms.ChoiceField(
-        label="Select region",
-        choices=[('us', 'United States'), ('eu', 'Europe'), ('asia', 'Asia')]
+    # Question 8: Select the cloud code
+    cloud_code = forms.ChoiceField(
+        label="Select the cloud code",
+        choices=[('QQA', 'QQA'), ('QQB', 'QQB'), ('QQC', 'QQC')]
     )
     
-    instance_number = forms.IntegerField(
-        label="Instance number",
-        min_value=1,
-        max_value=999
+    # Question 9: Select the zone type
+    zone_type = forms.ChoiceField(
+        label="Select the zone type",
+        choices=[('AAA', 'AAA'), ('BBB', 'BBB'), ('CCC', 'CCC')]
     )
+    
+    def __init__(self, *args, **kwargs):
+        # Get datacenters from kwargs if provided
+        datacenters = kwargs.pop('datacenters', None)
+        super().__init__(*args, **kwargs)
+        
+        # Populate datacenter choices if provided
+        if datacenters:
+            self.fields['datacenter'].choices = [(dc['datacenter'], f"{dc['datacenter']} ({dc['sitecode']})") for dc in datacenters]
     
     def clean(self):
         cleaned_data = super().clean()
-        is_production = cleaned_data.get('is_production')
         
-        # If production is Yes, ensure environment_type and is_temporary aren't required
-        if is_production:
-            cleaned_data['environment_type'] = None
-            cleaned_data['is_temporary'] = None
-        else:
-            # If production is No, ensure environment_type and is_temporary are provided
-            if not cleaned_data.get('environment_type'):
-                self.add_error('environment_type', 'This field is required for non-production environments')
+        # Validate existing_cluster dependencies
+        existing_cluster = cleaned_data.get('existing_cluster')
+        
+        if existing_cluster is None:
+            self.add_error('existing_cluster', 'Please select whether this is under an existing cluster.')
+        
+        # If not existing cluster, require architecture and zone
+        if existing_cluster is False:
+            if not cleaned_data.get('service_architecture'):
+                self.add_error('service_architecture', 'This field is required when creating a new cluster.')
             
-            if cleaned_data.get('is_temporary') is None:
-                self.add_error('is_temporary', 'This field is required for non-production environments')
+            if not cleaned_data.get('zone'):
+                self.add_error('zone', 'This field is required when creating a new cluster.')
+        
+        # Validate is_dmz
+        is_dmz = cleaned_data.get('is_dmz')
+        
+        if is_dmz is None:
+            self.add_error('is_dmz', 'Please select whether this host is in DMZ.')
+        
+        # If not DMZ, require hardware_type
+        if is_dmz is False and not cleaned_data.get('hardware_type'):
+            self.add_error('hardware_type', 'Hardware type is required for non-DMZ hosts.')
         
         return cleaned_data
-    
-    def generate_hostname(self):
-        """Generate hostname based on form answers"""
-        data = self.cleaned_data
-        
-        # Start with empty prefix
-        prefix = ""
-        
-        # Add environment type
-        if data['is_production']:
-            prefix += "prod-"
-        else:
-            prefix += f"{data['environment_type']}-"
-            if data['is_temporary']:
-                prefix += "temp-"
-        
-        # Add application name (abbreviated)
-        app_abbr = ''.join(word[0] for word in data['application_name'].split())
-        
-        # Add region
-        region = data['region']
-        
-        # Add instance number with padding
-        instance = str(data['instance_number']).zfill(3)
-        
-        # Combine all parts
-        hostname = f"{prefix}{app_abbr}-{region}-{instance}"
-        
-        return hostname

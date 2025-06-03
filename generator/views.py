@@ -116,15 +116,21 @@ def generate_clustername(data, datacenters):
 
 def esxi_hostname_generator(request):
     """View function for the ESXi hostname generator page"""
+    # Load datacenters for Q5
+    datacenters = load_datacenters_from_csv()
+    
+    # Initialize form with datacenters
+    form = HostnameQuestionnaireForm(request.POST or None, datacenters=datacenters)
+
     # Initialize form and step data
-    form = HostnameQuestionnaireForm(request.POST or None)
+    # form = HostnameQuestionnaireForm(request.POST or None)
     
     # Get current step from session or default to 1
     current_step = request.session.get('current_step', 1)
     total_steps = 9  # Total number of questions
     
     # Load datacenters for Q5
-    datacenters = load_datacenters_from_csv()
+    # datacenters = load_datacenters_from_csv()
     
     # Handle step navigation
     if request.method == 'POST':
