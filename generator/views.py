@@ -2,8 +2,13 @@ from django.shortcuts import render, redirect
 from django.http import JsonResponse
 import csv
 import os
+import re
+from django.views.decorators.csrf import csrf_protect
+from django.conf import settings
 from .forms import HostnameQuestionnaireForm
 from .models import Hostname
+import logging
+from datetime import datetime
 
 # Mock datacenter data (in real code, you'd load this from a CSV)
 DATACENTERS = [
@@ -34,6 +39,52 @@ def load_datacenters_from_csv():
         
     return datacenters
 
+def generate_sequential_hostname(request):
+    """
+    Generate sequential hostnames based on a prefix pattern
+    If abc001 exists, generate abc002 and so on
+    """
+    if request.method == 'POST':
+        base_hostname = request.POST.get('base_hostname', '')
+        is_dmz = request.POST.get('is_dmz', 'False') == 'True'
+        count = int(request.POST.get('count', 1))
+        
+        if not base_hostname:
+            return JsonResponse({'success': False, 'error': 'Base hostname is required'})
+        
+        try:
+            # Find the next available sequence number
+            next_seq = find_next_available_sequence(base_hostname, is_dmz)
+            
+            # Generate the requested number of hostnames
+            hostnames = []
+            
+            # Format differs between DMZ (3 digits) and non-DMZ (4 digits)
+            for i in range(count):
+                if is_dmz:
+                    hostnames.append(f"{base_hostname}{(next_seq + i):03d}")
+                else:
+                    hostnames.append(f"{base_hostname}{(next_seq + i):04d}")
+            
+            return JsonResponse({
+                'success': True,
+                'hostnames': hostnames,
+                'next_sequence': next_seq
+            })
+            
+        except Exception as e:
+            import traceback
+            return JsonResponse({
+                'success': False,
+                'error': str(e),
+                'traceback': traceback.format_exc()
+            })
+    
+    return JsonResponse({
+        'success': False,
+        'error': 'Invalid request method'
+    })
+
 def generate_hostnames(data, datacenters):
     """Generate hostnames based on form data"""
     hostnames = []
@@ -53,20 +104,22 @@ def generate_hostnames(data, datacenters):
         hostname_prefix = f"v{datacenter_code.lower()}u111swea"
         
         # Find the next available number for this hostname pattern (3 digits for DMZ)
-        next_number = Hostname.find_next_hostname_number(hostname_prefix)
+        next_number = find_next_available_sequence(hostname_prefix, is_dmz)
         
         # Generate hostnames with 3-digit sequence
-        for i in range(0, count):
+        for i in range(count):
             hostname = f"{hostname_prefix}{(next_number + i):03d}"
             hostnames.append(hostname)
     else:
-        # NEW FORMAT for non-DMZ hosts: l-v{sitecode}{hardwaretype}{component3}{component4}{4 digits}
+        # For non-DMZ hosts: l-v{sitecode}{hardwaretype}{component3}{component4}{4 digits}
         
         # Get hardware type code (1 character)
         hardware_code = get_hardware_type_code(data.get('hardware_type', ''))
         
         # Get cloud code
         cloud_code = data.get('cloud_code', '').lower()
+        if cloud_code == 'custom':
+            cloud_code = data.get('custom_cloud_code', '').lower()
         if len(cloud_code) > 3:  # Limit to 3 chars max
             cloud_code = cloud_code[:3]
         
@@ -78,13 +131,16 @@ def generate_hostnames(data, datacenters):
         # Build the hostname prefix
         hostname_prefix = f"l-v{datacenter_code.lower()}{hardware_code}{cloud_code}{zone_type}"
         
-        # Find the next available number for this hostname pattern
-        next_number = Hostname.find_next_hostname_number(hostname_prefix)
+        # Find the next available number for this hostname pattern (4 digits for non-DMZ)
+        next_number = find_next_available_sequence(hostname_prefix, is_dmz)
         
         # Generate hostnames with 4-digit sequence
-        for i in range(0, count):
+        for i in range(count):
             hostname = f"{hostname_prefix}{(next_number + i):04d}"
             hostnames.append(hostname)
+    
+    # Save the generated hostnames to CSV
+    save_hostnames_to_csv(hostnames, data.get('datacenter', ''), clustername=None)
     
     return hostnames
 
@@ -132,16 +188,10 @@ def esxi_hostname_generator(request):
     
     # Initialize form with datacenters
     form = HostnameQuestionnaireForm(request.POST or None, datacenters=datacenters)
-
-    # Initialize form and step data
-    # form = HostnameQuestionnaireForm(request.POST or None)
     
     # Get current step from session or default to 1
     current_step = request.session.get('current_step', 1)
     total_steps = 9  # Total number of questions
-    
-    # Load datacenters for Q5
-    # datacenters = load_datacenters_from_csv()
     
     # Handle step navigation
     if request.method == 'POST':
@@ -213,8 +263,14 @@ def esxi_hostname_generator(request):
                 step_data = request.session.get(f'step_{step}_data', {})
                 all_data.update(step_data)
             
+            # Support for sequence validation
+            if 'validate_sequence' in request.POST:
+                base_hostname = request.POST.get('base_hostname', '')
+                if base_hostname:
+                    all_data['base_hostname'] = base_hostname
+                
             # Remove navigation keys
-            for key in ['next_step', 'prev_step', 'submit', 'csrfmiddlewaretoken']:
+            for key in ['next_step', 'prev_step', 'submit', 'csrfmiddlewaretoken', 'validate_sequence']:
                 if key in all_data:
                     del all_data[key]
             
@@ -308,7 +364,7 @@ def calculate_steps_to_display(session):
     # If using existing cluster, skip steps 2-3
     if session.get('step_1_data', {}).get('existing_cluster') == 'True':
         steps = [1, 4, 5, 6, 7, 8, 9]
-    
+        
     return steps
 
 def validate_hostname_ajax(request):
@@ -319,11 +375,43 @@ def validate_hostname_ajax(request):
         return JsonResponse({'exists': exists})
     return JsonResponse({'error': 'Invalid request'}, status=400)
 
+@csrf_protect
+def check_existing_hostnames(request):
+    """Check existing hostnames in CSV and return the next available sequence number"""
+    if request.method == 'POST':
+        base_hostname = request.POST.get('base_hostname', '')
+        is_dmz = request.POST.get('is_dmz', 'False') == 'True'
+        
+        try:
+            # Print debug information
+            print(f"Checking for hostname: {base_hostname}, DMZ: {is_dmz}")
+            
+            # Find next available sequence
+            next_seq = find_next_available_sequence(base_hostname, is_dmz)
+            print(f"Found next sequence number: {next_seq}")
+            
+            return JsonResponse({
+                'success': True,
+                'next_sequence': next_seq
+            })
+            
+        except Exception as e:
+            import traceback
+            print(f"Error in check_existing_hostnames: {e}")
+            print(traceback.format_exc())
+            return JsonResponse({
+                'success': False,
+                'error': str(e)
+            })
+    
+    return JsonResponse({
+        'success': False,
+        'error': 'Invalid request method'
+    })
+
 def index(request):
     """Alias for the esxi_hostname_generator view"""
     return esxi_hostname_generator(request)
-
-# Add this helper function
 
 def get_hardware_type_code(hardware_type):
     """Convert full hardware type to single character code"""
@@ -332,3 +420,137 @@ def get_hardware_type_code(hardware_type):
         'HP': 'h'
     }
     return hardware_map.get(hardware_type, 'x')  # Default to 'x' if unknown
+
+def esxi_hostname(request):
+    """Alias for the esxi_hostname_generator view"""
+    return esxi_hostname_generator(request)
+
+def find_next_available_sequence(hostname_prefix, is_dmz=False):
+    """Find the next available sequence number for a hostname prefix"""
+    # Get all existing hostnames that match the prefix
+    existing_hostnames = get_existing_hostnames()
+    
+    # Filter hostnames that match the prefix
+    matching_hostnames = []
+    pattern = re.escape(hostname_prefix) + r'(\d+)$'
+    
+    for hostname in existing_hostnames:
+        match = re.search(pattern, hostname)
+        if match:
+            seq_num = int(match.group(1))
+            matching_hostnames.append(seq_num)
+    
+    # If no matching hostnames found, start from 1
+    if not matching_hostnames:
+        return 1
+        
+    # Sort sequence numbers
+    matching_hostnames.sort()
+    
+    # Find the first gap in the sequence
+    for i in range(len(matching_hostnames)):
+        if i == 0 and matching_hostnames[0] > 1:
+            # First number is greater than 1, so use 1
+            return 1
+            
+        if i < len(matching_hostnames) - 1:
+            curr = matching_hostnames[i]
+            next_val = matching_hostnames[i + 1]
+            
+            if next_val > curr + 1:
+                # Found a gap, return the next number in sequence
+                return curr + 1
+    
+    # No gaps found, use next available number
+    return matching_hostnames[-1] + 1
+
+def get_existing_hostnames():
+    """Get all existing hostnames from the CSV file"""
+    hostnames = []
+    csv_path = os.path.join(settings.BASE_DIR, 'generator', 'data', 'hostnames.csv')
+    
+    if not os.path.exists(os.path.dirname(csv_path)):
+        os.makedirs(os.path.dirname(csv_path))
+        
+    if not os.path.exists(csv_path):
+        # Create the CSV file with header if it doesn't exist
+        with open(csv_path, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(['hostname', 'datacenter', 'cluster_name', 'created_date'])
+    else:
+        # Read existing hostnames
+        try:
+            with open(csv_path, 'r') as csvfile:
+                reader = csv.reader(csvfile)
+                next(reader, None)  # Skip header row
+                
+                for row in reader:
+                    if row and len(row) > 0:
+                        hostnames.append(row[0].strip())  # First column contains hostname
+        except Exception as e:
+            print(f"Error reading CSV: {e}")
+    
+    return hostnames
+
+def save_hostnames_to_csv(hostnames, datacenter, clustername=None):
+    """Save generated hostnames to CSV file"""
+    from datetime import datetime
+    
+    csv_path = os.path.join(settings.BASE_DIR, 'generator', 'data', 'hostnames.csv')
+    
+    # Ensure the directory exists
+    os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+    
+    # Read existing content first to avoid overwriting
+    existing_hostnames = []
+    try:
+        if os.path.exists(csv_path):
+            with open(csv_path, 'r') as csvfile:
+                reader = csv.reader(csvfile)
+                existing_hostnames = list(reader)
+        else:
+            # Create with header
+            existing_hostnames = [['hostname', 'datacenter', 'cluster_name', 'created_date']]
+    except Exception as e:
+        print(f"Error reading CSV: {e}")
+        existing_hostnames = [['hostname', 'datacenter', 'cluster_name', 'created_date']]
+    
+    # Check if any of the hostnames already exist
+    existing_hostnames_list = [row[0] for row in existing_hostnames[1:] if row]
+    
+    # Open file for writing
+    try:
+        with open(csv_path, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            # Write header and existing entries
+            writer.writerows(existing_hostnames)
+            
+            # Add new hostnames
+            date_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            for hostname in hostnames:
+                if hostname not in existing_hostnames_list:
+                    writer.writerow([hostname, datacenter, clustername or "", date_str])
+    except Exception as e:
+        print(f"Error writing to CSV: {e}")
+    
+    return True
+
+def get_next_hostname_sequence(base_hostname, is_dmz):
+    """Helper function to get the next available sequence number"""
+    return find_next_available_sequence(base_hostname, is_dmz)
+
+def validate_hostname_exists(hostname):
+    """Check if hostname already exists in CSV"""
+    existing_hostnames = get_existing_hostnames()
+    return hostname in existing_hostnames
+
+def debug_log(message):
+    """Write a debug message to a log file"""
+    log_path = os.path.join(settings.BASE_DIR, 'generator', 'data', 'debug_log.txt')
+    try:
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, 'a') as f:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            f.write(f"[{timestamp}] {message}\n")
+    except Exception as e:
+        print(f"Error writing to debug log: {e}")

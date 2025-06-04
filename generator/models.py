@@ -150,8 +150,26 @@ class HostnameManager:
         
         if not numbers:
             return 1  # No valid numbers found, start with 1
-            
-        return max(numbers) + 1  # Next available number
+        
+        # Sort the sequence numbers
+        numbers.sort()
+        
+        # Find first gap in the sequence, if any
+        for i in range(len(numbers)):
+            if i == 0 and numbers[0] > 1:
+                # First number is greater than 1, so use 1
+                return 1
+                
+            if i < len(numbers) - 1:
+                curr = numbers[i]
+                next_val = numbers[i + 1]
+                
+                if next_val > curr + 1:
+                    # Found a gap, return the next number in sequence
+                    return curr + 1
+                
+        # No gaps found, use next available number
+        return max(numbers) + 1
     
     @classmethod
     def find_next_clustername_number(cls, cluster_prefix, purpose_code):

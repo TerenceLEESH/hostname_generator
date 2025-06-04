@@ -449,11 +449,156 @@
                         clusterPreview += architecture + '-' + zone + '-' + sitecode + '-PR01';
                         $('#cluster-preview').text(clusterPreview);
                     }
+                    
+                    // Check for existing hostnames via AJAX
+                    checkExistingHostnames();
+                }
+                
+                // Function to check existing hostnames and update preview accordingly
+                function checkExistingHostnames() {
+                    var zoneType = $('#id_zone_type').val();
+                    var datacenter = "{{ prev_data.5.datacenter|default:'' }}";
+                    var isDmz = "{{ prev_data.6.is_dmz|default:'False' }}";
+                    var hardwareType = "{{ prev_data.7.hardware_type|default:'' }}";
+                    var cloudCode = "{{ prev_data.8.cloud_code|default:'' }}";
+                    
+                    if (cloudCode === "custom") {
+                        cloudCode = "{{ prev_data.8.custom_cloud_code }}";
+                    }
+                    
+                    if (!zoneType || !datacenter || !hardwareType || !cloudCode) {
+                        return; // Exit if missing required data
+                    }
+                    
+                    // Create base hostname without number
+                    var baseHostname = '';
+                    var sitecode = '';
+                    
+                    {% for dc in datacenters %}
+                        if ("{{ dc.datacenter }}" === datacenter) {
+                            sitecode = "{{ dc.sitecode }}";
+                        }
+                    {% endfor %}
+                    
+                    if (isDmz === "True") {
+                        baseHostname = 'v' + sitecode.toLowerCase() + 'u111swea';
+                    } else {
+                        var hwCode = hardwareType === "Dell" ? "d" : (hardwareType === "HP" ? "h" : "x");
+                        var cloudCodeShort = cloudCode.toLowerCase().substring(0, 3);
+                        var zoneTypeShort = zoneType.toLowerCase().substring(0, 3);
+                        baseHostname = 'l-v' + sitecode.toLowerCase() + hwCode + cloudCodeShort + zoneTypeShort;
+                    }
+                    
+                    // Send AJAX request to check for existing hostnames
+                    $.ajax({
+                        url: "{% url 'check_existing_hostnames' %}", // You'll need to create this URL
+                        type: "POST",
+                        data: {
+                            'base_hostname': baseHostname,
+                            'is_dmz': isDmz,
+                            'csrfmiddlewaretoken': $('input[name=csrfmiddlewaretoken]').val()
+                        },
+                        success: function(data) {
+                            if (data.success) {
+                                var nextSequence = data.next_sequence;
+                                var hostCount = parseInt("{{ prev_data.4.hostname_count|default:'1' }}");
+                                
+                                // Show preview with next available sequence
+                                if (isDmz === "True") {
+                                    var sequenceFormat = String(nextSequence).padStart(3, '0');
+                                    $('#hostname-preview').text(baseHostname + sequenceFormat);
+                                } else {
+                                    var sequenceFormat = String(nextSequence).padStart(4, '0');
+                                    $('#hostname-preview').text(baseHostname + sequenceFormat);
+                                }
+                                
+                                // Show a note about the sequence
+                                if (nextSequence > 1) {
+                                    if ($('#sequence-note').length === 0) {
+                                        $('#hostname-preview').after('<div id="sequence-note" class="text-info mt-2"><small>Note: Previous hostnames exist in this sequence. This will be the next available number.</small></div>');
+                                    }
+                                } else {
+                                    $('#sequence-note').remove();
+                                }
+                                
+                                // If multiple hostnames requested, show a note
+                                if (hostCount > 1) {
+                                    if ($('#multiple-hostnames-note').length === 0) {
+                                        $('#hostname-preview').after('<div id="multiple-hostnames-note" class="text-info mt-2"><small>Note: ' + hostCount + ' sequential hostnames will be generated starting with this one.</small></div>');
+                                    } else {
+                                        $('#multiple-hostnames-note small').text('Note: ' + hostCount + ' sequential hostnames will be generated starting with this one.');
+                                    }
+                                } else {
+                                    $('#multiple-hostnames-note').remove();
+                                }
+                            } else {
+                                console.error('Error checking hostnames:', data.error);
+                            }
+                        },
+                        error: function(xhr, status, error) {
+                            console.error('AJAX error:', error);
+                        }
+                    });
                 }
                 
                 $('#id_zone_type').change(updatePreview);
                 updatePreview();
             {% endif %}
+            
+            // Handle form submission with validation
+            $('#hostname-form').submit(function(e) {
+                if ($(this).find('button[name="submit"]').is(':focus')) {
+                    var isValid = true;
+                    var errorMessages = [];
+                    
+                    // Basic form validation
+                    $(this).find('select[required], input[required]').each(function() {
+                        if (!$(this).val()) {
+                            isValid = false;
+                            errorMessages.push('Please complete all required fields');
+                            return false; // exit the loop
+                        }
+                    });
+                    
+                    // Custom validation for radio buttons
+                    var radioGroups = {};
+                    $(this).find('input[type="radio"][required]').each(function() {
+                        var name = $(this).attr('name');
+                        radioGroups[name] = radioGroups[name] || false;
+                        if ($(this).is(':checked')) {
+                            radioGroups[name] = true;
+                        }
+                    });
+                    
+                    $.each(radioGroups, function(name, isChecked) {
+                        if (!isChecked) {
+                            isValid = false;
+                            errorMessages.push('Please select an option for ' + name.replace('_', ' '));
+                        }
+                    });
+                    
+                    // Show errors or continue
+                    if (!isValid) {
+                        e.preventDefault();
+                        
+                        // Show error message
+                        var errorHtml = '<div class="alert alert-danger validation-error">';
+                        $.each(errorMessages, function(i, msg) {
+                            errorHtml += '<p class="mb-0">' + msg + '</p>';
+                        });
+                        errorHtml += '</div>';
+                        
+                        // Remove any existing error messages and add the new one
+                        $('.validation-error').remove();
+                        $(this).prepend(errorHtml);
+                        
+                        // Scroll to the error
+                        $('html, body').animate({
+                            scrollTop: $('.validation-error').offset().top - 100
+                        }, 200);
+                    }
+                }
+            });
             
             // Show/hide custom cloud code input
             $('#id_cloud_code').change(function() {
@@ -645,6 +790,133 @@
                     + progress + '%;" aria-valuenow="' + progress 
                     + '" aria-valuemin="0" aria-valuemax="100">' + progress + '%</div></div>');
             }
+        });
+    </script>
+    
+    <!-- Additional script for next available hostname detection -->
+    <script>
+        $(document).ready(function() {
+            // Function to validate and format hostname numbers
+            function formatHostnameNumber(number, isDmz) {
+                if (isDmz) {
+                    // DMZ hostnames use 3 digits (001, 002, etc.)
+                    return String(number).padStart(3, '0');
+                } else {
+                    // Regular hostnames use 4 digits (0001, 0002, etc.)
+                    return String(number).padStart(4, '0');
+                }
+            }
+            
+            // Form submission additional validation
+            $('#hostname-form').on('submit', function() {
+                if ($(this).find('button[name="submit"]').is(':focus')) {
+                    // Add a hidden field with validation data
+                    $(this).append('<input type="hidden" name="validate_sequence" value="true">');
+                    
+                    // Store expected sequence information
+                    if ({% if current_step == 9 %}true{% else %}false{% endif %}) {
+                        var baseHostname = $('#hostname-preview').text().replace(/\d+$/, '');
+                        $(this).append('<input type="hidden" name="base_hostname" value="' + baseHostname + '">');
+                    }
+                }
+            });
+            
+            // Function to check for existing hostnames and get next sequence
+            function checkExistingHostnames() {
+                var zoneType = $('#id_zone_type').val();
+                var datacenter = "{{ prev_data.5.datacenter|default:'' }}";
+                var isDmz = "{{ prev_data.6.is_dmz|default:'False' }}";
+                var hardwareType = "{{ prev_data.7.hardware_type|default:'' }}";
+                var cloudCode = "{{ prev_data.8.cloud_code|default:'' }}";
+                
+                if (cloudCode === "custom") {
+                    cloudCode = "{{ prev_data.8.custom_cloud_code }}";
+                }
+                
+                if (!zoneType || !datacenter || !hardwareType || !cloudCode) {
+                    return; // Exit if missing required data
+                }
+                
+                // Create base hostname without number
+                var baseHostname = '';
+                var sitecode = '';
+                
+                {% for dc in datacenters %}
+                    if ("{{ dc.datacenter }}" === datacenter) {
+                        sitecode = "{{ dc.sitecode }}";
+                    }
+                {% endfor %}
+                
+                if (isDmz === "True") {
+                    baseHostname = 'v' + sitecode.toLowerCase() + 'u111swea';
+                } else {
+                    var hwCode = hardwareType === "Dell" ? "d" : (hardwareType === "HP" ? "h" : "x");
+                    var cloudCodeShort = cloudCode.toLowerCase().substring(0, 3);
+                    var zoneTypeShort = zoneType.toLowerCase().substring(0, 3);
+                    baseHostname = 'l-v' + sitecode.toLowerCase() + hwCode + cloudCodeShort + zoneTypeShort;
+                }
+                
+                // Send AJAX request to check for existing hostnames
+                $.ajax({
+                    url: "{% url 'check_existing_hostnames' %}", 
+                    type: "POST",
+                    data: {
+                        'base_hostname': baseHostname,
+                        'is_dmz': isDmz,
+                        'csrfmiddlewaretoken': $('input[name=csrfmiddlewaretoken]').val()
+                    },
+                    success: function(data) {
+                        if (data.success) {
+                            var nextSequence = data.next_sequence;
+                            var hostCount = parseInt("{{ prev_data.4.hostname_count|default:'1' }}");
+                            
+                            // Show preview with next available sequence
+                            if (isDmz === "True") {
+                                var sequenceFormat = String(nextSequence).padStart(3, '0');
+                                $('#hostname-preview').text(baseHostname + sequenceFormat);
+                            } else {
+                                var sequenceFormat = String(nextSequence).padStart(4, '0');
+                                $('#hostname-preview').text(baseHostname + sequenceFormat);
+                            }
+                            
+                            // Show a note about the sequence
+                            if (nextSequence > 1) {
+                                if ($('#sequence-note').length === 0) {
+                                    $('#hostname-preview').after('<div id="sequence-note" class="text-info mt-2"><small>Note: Previous hostnames exist in this sequence. This will be the next available number.</small></div>');
+                                }
+                            } else {
+                                $('#sequence-note').remove();
+                            }
+                            
+                            // If multiple hostnames requested, show a note
+                            if (hostCount > 1) {
+                                if ($('#multiple-hostnames-note').length === 0) {
+                                    $('#hostname-preview').after('<div id="multiple-hostnames-note" class="text-info mt-2"><small>Note: ' + hostCount + ' sequential hostnames will be generated starting with this one.</small></div>');
+                                } else {
+                                    $('#multiple-hostnames-note small').text('Note: ' + hostCount + ' sequential hostnames will be generated starting with this one.');
+                                }
+                            } else {
+                                $('#multiple-hostnames-note').remove();
+                            }
+                        } else {
+                            console.error('Error checking hostnames:', data.error);
+                        }
+                    },
+                    error: function(xhr, status, error) {
+                        console.error('AJAX error:', error);
+                    }
+                });
+            }
+            
+            // Call the check function on zone type change or page load
+            {% if current_step == 9 %}
+                $('#id_zone_type').change(checkExistingHostnames);
+                
+                // Initial check when form is ready
+                if ($('#id_zone_type').val()) {
+                    setTimeout(checkExistingHostnames, 500);
+                }
+            {% endif %}
         });
     </script>
 </body>
