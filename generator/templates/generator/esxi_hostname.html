@@ -471,5 +471,108 @@
             {% endif %}
         });
     </script>
+    <script>
+        $(document).ready(function() {
+            // ...existing code...
+
+            // Set up hardware type and cloud code interaction
+            {% if current_step == 7 %}
+                $('#id_hardware_type').change(function() {
+                    // Store the hardware choice in session storage for next step
+                    sessionStorage.setItem('hardwareType', $(this).val());
+                });
+            {% endif %}
+
+            {% if current_step == 8 %}
+                // Check if we're coming from hardware type selection and adjust cloud code options
+                $(function() {
+                    var hardwareType = sessionStorage.getItem('hardwareType');
+                    
+                    // If hardware type was HP (DEF), pre-select QQC and show tg# input
+                    if (hardwareType === 'HP') {
+                        // Hide standard options except QQC and Custom
+                        $('#id_cloud_code option[value="QQA"]').hide();
+                        $('#id_cloud_code option[value="QQB"]').hide();
+                        
+                        // Add tg# option if not already present
+                        if ($('#id_cloud_code option[value="tg"]').length === 0) {
+                            $('#id_cloud_code').append('<option value="tg">TG# (Enter digit below)</option>');
+                        }
+                        
+                        // Pre-select QQC
+                        $('#id_cloud_code').val('QQC');
+                        
+                        // Create the tg# input field if not exists
+                        if ($('#tg_number_group').length === 0) {
+                            var tgInput = '<div class="form-group" id="tg_number_group">' +
+                                '<label for="id_tg_number">Enter TG number (0-9):</label>' +
+                                '<input type="number" name="tg_number" id="id_tg_number" class="form-control" ' +
+                                'min="0" max="9" step="1" required>' +
+                                '<small class="form-text text-muted">Please enter a single digit (0-9)</small>' +
+                                '</div>';
+                            $('#custom_cloud_code_group').after(tgInput);
+                        }
+                        
+                        // Show/hide tg input based on selection
+                        $('#id_cloud_code').change(function() {
+                            if ($(this).val() === 'tg') {
+                                $('#tg_number_group').show();
+                                $('#custom_cloud_code_group').hide();
+                                $('#id_tg_number').prop('required', true);
+                                $('#id_custom_cloud_code').prop('required', false);
+                            } else if ($(this).val() === 'custom') {
+                                $('#tg_number_group').hide();
+                                $('#custom_cloud_code_group').show();
+                                $('#id_tg_number').prop('required', false);
+                                $('#id_custom_cloud_code').prop('required', true);
+                            } else {
+                                $('#tg_number_group').hide();
+                                $('#custom_cloud_code_group').hide();
+                                $('#id_tg_number').prop('required', false);
+                                $('#id_custom_cloud_code').prop('required', false);
+                            }
+                        });
+                        
+                        // Initial toggle
+                        if ($('#id_cloud_code').val() === 'tg') {
+                            $('#tg_number_group').show();
+                            $('#custom_cloud_code_group').hide();
+                        } else {
+                            $('#tg_number_group').hide();
+                        }
+                    } 
+                    // If hardware type was Dell (ABC) or other
+                    else if (hardwareType === 'Dell') {
+                        // Hide QQC option
+                        $('#id_cloud_code option[value="QQC"]').hide();
+                        // Show QQA and QQB
+                        $('#id_cloud_code option[value="QQA"]').show();
+                        $('#id_cloud_code option[value="QQB"]').show();
+                        // Remove TG# option if exists
+                        $('#id_cloud_code option[value="tg"]').remove();
+                        // Hide TG input field if exists
+                        $('#tg_number_group').hide();
+                        
+                        // If QQC was previously selected, change to QQA
+                        if ($('#id_cloud_code').val() === 'QQC') {
+                            $('#id_cloud_code').val('QQA');
+                        }
+                    }
+                    
+                    // Handle form submission to combine tg# value
+                    $('form').on('submit', function() {
+                        if ($('#id_cloud_code').val() === 'tg' && $('#id_tg_number').val()) {
+                            var tgValue = 'tg' + $('#id_tg_number').val();
+                            // Add a hidden field with the combined value
+                            $(this).append('<input type="hidden" name="custom_cloud_code" value="' + tgValue + '">');
+                            $('#id_cloud_code').val('custom'); // Set to custom so backend processes it correctly
+                        }
+                    });
+                });
+            {% endif %}
+                
+            // ...existing code...
+        });
+    </script>
 </body>
 </html>

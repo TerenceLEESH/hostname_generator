@@ -19,7 +19,12 @@
                 <div class="alert alert-info">
                     <h4 class="text-center">{{ clustername }}</h4>
                 </div>
-                <p>This cluster name has been validated and saved to the database.</p>
+                <p>This cluster name has been generated for your reference.</p>
+                {% if preview_only %}
+                <div class="alert alert-warning">
+                    <strong>Note:</strong> This name is only a preview and has not been saved to the database.
+                </div>
+                {% endif %}
             </div>
         </div>
         {% endif %}
@@ -56,7 +61,12 @@
                     </div>
                 {% endif %}
                 
-                <p>These hostname{{ hostname_count|pluralize }} have been validated and saved to the database.</p>
+                <p>These hostname{{ hostname_count|pluralize }} have been generated for your reference.</p>
+                {% if preview_only %}
+                <div class="alert alert-warning">
+                    <strong>Note:</strong> These hostnames are only previews and have not been saved to the database.
+                </div>
+                {% endif %}
                 
                 {% if is_dmz %}
                     <div class="alert alert-warning">

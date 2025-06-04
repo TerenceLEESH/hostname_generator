@@ -150,12 +150,19 @@ def esxi_hostname_generator(request):
             request.session[f'step_{current_step}_data'] = request.POST.dict()
             
             # Special handling for custom cloud code (if on step 8)
-            if current_step == 8 and request.POST.get('cloud_code') == 'custom':
-                custom_code = request.POST.get('custom_cloud_code')
-                if custom_code:
-                    # Update the session data to use the custom value directly
+            if current_step == 8:
+                if request.POST.get('cloud_code') == 'custom':
+                    custom_code = request.POST.get('custom_cloud_code')
+                    if custom_code:
+                        # Update the session data to use the custom value directly
+                        data = request.session[f'step_{current_step}_data']
+                        data['cloud_code'] = custom_code
+                        request.session[f'step_{current_step}_data'] = data
+                # Handle tg# format for HP hardware
+                elif request.POST.get('cloud_code') == 'tg' and request.POST.get('tg_number'):
+                    tg_value = f"tg{request.POST.get('tg_number')}"
                     data = request.session[f'step_{current_step}_data']
-                    data['cloud_code'] = custom_code
+                    data['cloud_code'] = tg_value
                     request.session[f'step_{current_step}_data'] = data
             
             # Standard next step
@@ -219,7 +226,7 @@ def esxi_hostname_generator(request):
             if all_data.get('existing_cluster') == 'False':
                 clustername = generate_clustername(all_data, datacenters)
                 
-                # Check if cluster name already exists
+                # Check if cluster name already exists - now only checks, doesn't save
                 if clustername and Hostname.validate_clustername_exists(clustername):
                     # Calculate steps to display (for progress indicator)
                     steps_to_display = calculate_steps_to_display(request.session)
@@ -234,7 +241,7 @@ def esxi_hostname_generator(request):
                         'datacenters': datacenters,
                     })
             
-            # Check if hostnames already exist
+            # Check if hostnames already exist - now only checks, doesn't save
             existing_hostnames = []
             for hostname in hostnames:
                 if Hostname.validate_hostname_exists(hostname):
@@ -254,16 +261,9 @@ def esxi_hostname_generator(request):
                     'datacenters': datacenters,
                 })
             
-            # Save the hostnames and cluster name
-            saved_hostnames = []
-            for hostname in hostnames:
-                # Save to DataFrame
-                Hostname.add_hostname_to_df(hostname)
-                saved_hostnames.append(hostname)
-            
-            # Save cluster name if generated
-            if clustername:
-                Hostname.add_clustername_to_df(clustername)
+            # REMOVED: Save the hostnames and cluster name to database
+            # Instead, just pass the generated names to the result template
+            saved_hostnames = hostnames  # No actual saving happens now
             
             # Clear session data
             for step in range(1, total_steps + 1):
@@ -276,7 +276,8 @@ def esxi_hostname_generator(request):
                 'hostnames': saved_hostnames,
                 'hostname_count': len(saved_hostnames),
                 'clustername': clustername,
-                'is_dmz': all_data.get('is_dmz') == 'True'  # Pass DMZ status
+                'is_dmz': all_data.get('is_dmz') == 'True',  # Pass DMZ status
+                'preview_only': True  # New flag indicating no database save happened
             })
     
     # Initial GET request
