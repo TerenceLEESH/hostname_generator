@@ -413,7 +413,7 @@
                     
                     // Cluster name preview (if creating a new cluster)
                     if (existingCluster === "False") {
-                        var clusterPreview = 'CLS-' + cloudCode + '-' + zoneType + '-';
+                        var clusterPreview = 'CLS-' + datacenter + '-' + cloudCode + '-' + zoneType + '-';
                         clusterPreview += architecture + '-' + zone + '-' + sitecode + '-PR01';
                         $('#cluster-preview').text(clusterPreview);
                     }
