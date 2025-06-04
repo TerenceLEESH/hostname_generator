@@ -333,6 +333,33 @@
                 {% endif %}
             </div>
         </form>
+        
+        {% if generated_hostnames %}
+        <div class="mt-5">
+            <h3>Generated Hostnames</h3>
+            <div class="card">
+                <div class="card-header d-flex justify-content-between">
+                    <span>Results</span>
+                    <button id="copy-results" class="btn btn-sm btn-outline-primary">Copy All</button>
+                </div>
+                <div class="card-body">
+                    {% if cluster_name %}
+                    <div class="mb-3">
+                        <strong>Cluster Name:</strong> 
+                        <span id="cluster-result">{{ cluster_name }}</span>
+                    </div>
+                    {% endif %}
+                    <strong>Hostnames:</strong>
+                    <ol id="hostname-results">
+                        {% for hostname in generated_hostnames %}
+                        <li>{{ hostname }}</li>
+                        {% endfor %}
+                    </ol>
+                </div>
+            </div>
+            <a href="{% url 'esxi_hostname' %}" class="btn btn-warning mt-3">Start Over</a>
+        </div>
+        {% endif %}
     </div>
     
     <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
@@ -347,6 +374,11 @@
                         $('#step-skip-info').remove();
                     }
                 });
+                
+                // Initialize on page load
+                if ($('#id_existing_cluster_yes').is(':checked')) {
+                    $('#id_existing_cluster_yes').trigger('change');
+                }
             {% endif %}
             
             // Generate button on Q6 if DMZ = Yes
@@ -427,21 +459,51 @@
             $('#id_cloud_code').change(function() {
                 if ($(this).val() === 'custom') {
                     $('#custom_cloud_code_group').show();
+                    $('#id_custom_cloud_code').prop('required', true);
                 } else {
                     $('#custom_cloud_code_group').hide();
+                    $('#id_custom_cloud_code').prop('required', false);
                 }
             });
             
             // Initialize custom cloud code visibility
             if ($('#id_cloud_code').val() === 'custom') {
                 $('#custom_cloud_code_group').show();
+                $('#id_custom_cloud_code').prop('required', true);
             } else {
                 $('#custom_cloud_code_group').hide();
+                $('#id_custom_cloud_code').prop('required', false);
             }
-        });
-    </script>
-    <script>
-        $(document).ready(function() {
+            
+            // Copy results to clipboard
+            $('#copy-results').click(function() {
+                var textToCopy = '';
+                
+                // Add cluster name if it exists
+                if ($('#cluster-result').length) {
+                    textToCopy += 'Cluster Name: ' + $('#cluster-result').text() + '\n\n';
+                }
+                
+                // Add hostnames
+                textToCopy += 'Hostnames:\n';
+                $('#hostname-results li').each(function(index) {
+                    textToCopy += (index + 1) + '. ' + $(this).text() + '\n';
+                });
+                
+                // Copy to clipboard
+                navigator.clipboard.writeText(textToCopy).then(function() {
+                    // Change button text temporarily
+                    var $btn = $('#copy-results');
+                    var originalText = $btn.text();
+                    $btn.text('Copied!');
+                    setTimeout(function() {
+                        $btn.text(originalText);
+                    }, 2000);
+                }, function() {
+                    alert('Failed to copy to clipboard');
+                });
+            });
+            
             // Handle showing/hiding the custom cloud code field
             function toggleCustomCloudCode() {
                 if ($('#id_cloud_code').val() === 'custom') {
@@ -469,12 +531,7 @@
                     $('#id_custom_cloud_code').prop('required', true);
                 }
             {% endif %}
-        });
-    </script>
-    <script>
-        $(document).ready(function() {
-            // ...existing code...
-
+            
             // Set up hardware type and cloud code interaction
             {% if current_step == 7 %}
                 $('#id_hardware_type').change(function() {
@@ -570,8 +627,24 @@
                     });
                 });
             {% endif %}
-                
-            // ...existing code...
+            
+            // Add a confirm dialog for the Start Over button
+            $('a.btn-warning').on('click', function(e) {
+                if (!confirm('Are you sure you want to start over? All your current selections will be lost.')) {
+                    e.preventDefault();
+                }
+            });
+            
+            // Add progress bar functionality
+            var totalSteps = {{ steps_to_display|length }};
+            var currentStep = {{ current_step }};
+            var progress = Math.round((currentStep / totalSteps) * 100);
+            
+            if ($('.step-indicator').length > 0) {
+                $('.step-indicator').after('<div class="progress mb-4"><div class="progress-bar" role="progressbar" style="width: ' 
+                    + progress + '%;" aria-valuenow="' + progress 
+                    + '" aria-valuemin="0" aria-valuemax="100">' + progress + '%</div></div>');
+            }
         });
     </script>
 </body>
