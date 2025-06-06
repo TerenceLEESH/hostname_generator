@@ -245,6 +245,9 @@
                                 <div class="alert alert-primary" id="cluster-preview">
                                     Cluster name will be generated
                                 </div>
+                                <div id="cluster-exists-warning" class="text-danger" style="display: none;">
+                                    <small>Warning: This cluster name already exists. A new sequence number will be used.</small>
+                                </div>
                             </div>
                         {% endif %}
                         <div>
@@ -445,11 +448,22 @@
                     
                     // Cluster name preview (if creating a new cluster)
                     if (existingCluster === "False") {
-                        var clusterPreview = 'CLS-' + datacenter + '-' + cloudCode + '-' + zoneType + '-';
-                        clusterPreview += architecture + '-' + zone + '-' + sitecode + '-PR01';
-                        $('#cluster-preview').text(clusterPreview);
+                        var clusterPrefix = datacenter + '-APAC-' + architecture + '-' + zone + '-';
+                        
+                        // Check existing clusternames via AJAX
+                        checkExistingClusternames(clusterPrefix, function(nextSequence, exists) {
+                            var clusterPreview = clusterPrefix + nextSequence;
+                            $('#cluster-preview').text(clusterPreview);
+                            
+                            // Show warning if we're not using sequence 1
+                            if (nextSequence > 1) {
+                                $('#cluster-exists-warning').show();
+                            } else {
+                                $('#cluster-exists-warning').hide();
+                            }
+                        });
                     }
-                    
+
                     // Check for existing hostnames via AJAX
                     checkExistingHostnames();
                 }

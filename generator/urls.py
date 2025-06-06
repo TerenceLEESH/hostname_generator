@@ -6,4 +6,5 @@ urlpatterns = [
     path('validate/', views.validate_hostname_ajax, name='validate_hostname'),
     path('check-existing-hostnames/', views.check_existing_hostnames, name='check_existing_hostnames'),
     path('generate-sequential/', views.generate_sequential_hostname, name='generate_sequential_hostname'),
+    path('check_clustername/', views.check_clustername_view, name='check_clustername_view'),
 ]
