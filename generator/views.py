@@ -427,46 +427,58 @@ def esxi_hostname(request):
 
 def find_next_available_sequence(hostname_prefix, is_dmz=False):
     """Find the next available sequence number for a hostname prefix"""
-    # Get all existing hostnames that match the prefix
+    # Get all existing hostnames
     existing_hostnames = get_existing_hostnames()
     
-    # Filter hostnames that match the prefix
-    matching_hostnames = []
-    pattern = re.escape(hostname_prefix) + r'(\d+)$'
+    # Get all existing clusternames (to avoid conflicts)
+    existing_clusternames = get_existing_clusternames()
     
-    for hostname in existing_hostnames:
-        match = re.search(pattern, hostname)
+    # Combine all names
+    all_existing_names = existing_hostnames + existing_clusternames
+    
+    # Filter names that match the prefix
+    matching_sequences = []
+    pattern = re.escape(hostname_prefix) + r'(\d+)$'
+    debug_log(f"Checking pattern: {pattern} against {len(all_existing_names)} names")
+    
+    for name in all_existing_names:
+        match = re.search(pattern, name)
         if match:
             seq_num = int(match.group(1))
-            matching_hostnames.append(seq_num)
+            matching_sequences.append(seq_num)
     
-    # If no matching hostnames found, start from 1
-    if not matching_hostnames:
+    debug_log(f"Found {len(matching_sequences)} matching sequences for prefix {hostname_prefix}")
+    
+    # If no matching sequences found, start from 1
+    if not matching_sequences:
         return 1
-        
+    
     # Sort sequence numbers
-    matching_hostnames.sort()
+    matching_sequences.sort()
     
     # Find the first gap in the sequence
-    for i in range(len(matching_hostnames)):
-        if i == 0 and matching_hostnames[0] > 1:
+    for i in range(len(matching_sequences)):
+        if i == 0 and matching_sequences[0] > 1:
             # First number is greater than 1, so use 1
             return 1
-            
-        if i < len(matching_hostnames) - 1:
-            curr = matching_hostnames[i]
-            next_val = matching_hostnames[i + 1]
+        
+        if i < len(matching_sequences) - 1:
+            curr = matching_sequences[i]
+            next_val = matching_sequences[i + 1]
             
             if next_val > curr + 1:
                 # Found a gap, return the next number in sequence
                 return curr + 1
     
     # No gaps found, use next available number
-    return matching_hostnames[-1] + 1
+    return matching_sequences[-1] + 1
+
 
 def get_existing_hostnames():
-    """Get all existing hostnames from the CSV file"""
+    """Get all existing hostnames from the hostname CSV files"""
     hostnames = []
+    
+    # Check hostnames.csv in data folder
     csv_path = os.path.join(settings.BASE_DIR, 'generator', 'data', 'hostnames.csv')
     
     if not os.path.exists(os.path.dirname(csv_path)):
@@ -476,7 +488,7 @@ def get_existing_hostnames():
         # Create the CSV file with header if it doesn't exist
         with open(csv_path, 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
-            writer.writerow(['hostname', 'datacenter', 'cluster_name', 'created_date'])
+            writer.writerow(['servername'])
     else:
         # Read existing hostnames
         try:
@@ -486,22 +498,44 @@ def get_existing_hostnames():
                 
                 for row in reader:
                     if row and len(row) > 0:
-                        hostnames.append(row[0].strip())  # First column contains hostname
+                        hostnames.append(row[0].strip())
         except Exception as e:
-            print(f"Error reading CSV: {e}")
+            debug_log(f"Error reading hostnames CSV: {e}")
     
     return hostnames
 
-def save_hostnames_to_csv(hostnames, datacenter, clustername=None):
-    """Save generated hostnames to CSV file"""
-    from datetime import datetime
+
+def get_existing_clusternames():
+    """Get all existing clusternames from the clustername CSV file"""
+    clusternames = []
+    clusternames_csv_path = os.path.join(settings.BASE_DIR, 'generator', 'existing_clusternames.csv')
+    
+    try:
+        if os.path.exists(clusternames_csv_path):
+            with open(clusternames_csv_path, 'r') as csvfile:
+                reader = csv.reader(csvfile)
+                next(reader, None)  # Skip header row
+                for row in reader:
+                    if row and len(row) > 0:
+                        clusternames.append(row[0].strip())
+        else:
+            debug_log(f"Clusternames CSV does not exist: {clusternames_csv_path}")
+    except Exception as e:
+        debug_log(f"Error reading existing_clusternames.csv: {e}")
+    
+    return clusternames
+
+
+def save_hostnames_to_csv(hostnames):
+    """Save generated hostnames to CSV file with duplicate prevention"""
+    import traceback
     
     csv_path = os.path.join(settings.BASE_DIR, 'generator', 'data', 'hostnames.csv')
     
     # Ensure the directory exists
     os.makedirs(os.path.dirname(csv_path), exist_ok=True)
     
-    # Read existing content first to avoid overwriting
+    # Get all existing hostnames
     existing_hostnames = []
     try:
         if os.path.exists(csv_path):
@@ -510,47 +544,358 @@ def save_hostnames_to_csv(hostnames, datacenter, clustername=None):
                 existing_hostnames = list(reader)
         else:
             # Create with header
-            existing_hostnames = [['hostname', 'datacenter', 'cluster_name', 'created_date']]
+            existing_hostnames = [['servername']]
     except Exception as e:
-        print(f"Error reading CSV: {e}")
-        existing_hostnames = [['hostname', 'datacenter', 'cluster_name', 'created_date']]
+        debug_log(f"Error reading hostnames CSV: {e}")
+        existing_hostnames = [['servername']]
     
-    # Check if any of the hostnames already exist
-    existing_hostnames_list = [row[0] for row in existing_hostnames[1:] if row]
+    # Get all existing hostnames and clusternames for validation
+    all_existing_names = get_existing_hostnames() + get_existing_clusternames()
+    all_existing_set = {name.lower() for name in all_existing_names}
     
-    # Open file for writing
+    # Hostnames that will actually be added (duplicates filtered out)
+    hostnames_to_add = []
+    duplicates = []
+    
+    # Check each hostname and only add if it doesn't exist
+    for hostname in hostnames:
+        # Case-insensitive comparison
+        if hostname.strip().lower() in all_existing_set:
+            duplicates.append(hostname)
+            debug_log(f"Duplicate hostname found: {hostname}")
+        else:
+            hostnames_to_add.append(hostname)
+            # Add to the set to prevent duplicates even within the batch
+            all_existing_set.add(hostname.strip().lower())
+    
+    # Log duplicate information
+    if duplicates:
+        debug_log(f"WARNING: {len(duplicates)} duplicate hostnames were found and will not be added")
+        
+    # Write non-duplicate hostnames to the CSV
+    if hostnames_to_add:
+        try:
+            with open(csv_path, 'w', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                # Write header
+                writer.writerow(['servername'])
+                
+                # Write existing hostnames (except header)
+                for row in existing_hostnames[1:]:
+                    if row:  # Skip empty rows
+                        writer.writerow(row)
+                
+                # Add new hostnames
+                for hostname in hostnames_to_add:
+                    writer.writerow([hostname])
+            debug_log(f"Successfully wrote {len(hostnames_to_add)} hostnames to CSV")
+        except Exception as e:
+            debug_log(f"Error writing to hostnames CSV: {e}")
+            print(traceback.format_exc())
+            return False
+    else:
+        debug_log("No new hostnames to add (all were duplicates)")
+    
+    # Return information about which hostnames were added and which were duplicates
+    return {
+        'added': hostnames_to_add,
+        'duplicates': duplicates,
+        'success': len(hostnames_to_add) > 0 or len(duplicates) == 0
+    }
+
+def save_clustername_to_csv(clustername):
+    """Save a clustername to the clusternames CSV file"""
+    clusternames_csv_path = os.path.join(settings.BASE_DIR, 'generator', 'existing_clusternames.csv')
+    
+    # Ensure the file exists with header
+    if not os.path.exists(clusternames_csv_path):
+        try:
+            with open(clusternames_csv_path, 'w', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(['clustername'])
+        except Exception as e:
+            debug_log(f"Error creating clusternames CSV: {e}")
+            return False
+    
+    # Read existing clusternames
+    existing_rows = []
     try:
-        with open(csv_path, 'w', newline='') as csvfile:
+        with open(clusternames_csv_path, 'r') as csvfile:
+            reader = csv.reader(csvfile)
+            existing_rows = list(reader)
+    except Exception as e:
+        debug_log(f"Error reading clusternames CSV: {e}")
+        existing_rows = [['clustername']]
+    
+    # Get all existing names for validation
+    all_existing_names = get_existing_hostnames() + get_existing_clusternames()
+    all_existing_set = {name.lower() for name in all_existing_names}
+    
+    # Check if clustername already exists (case-insensitive)
+    if clustername.lower() in all_existing_set:
+        debug_log(f"Clustername {clustername} already exists")
+        return False
+    
+    # Append the new clustername if it doesn't exist
+    try:
+        with open(clusternames_csv_path, 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
-            # Write header and existing entries
-            writer.writerows(existing_hostnames)
+            # Write header
+            writer.writerow(['clustername'])
             
-            # Add new hostnames
-            date_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            for hostname in hostnames:
-                if hostname not in existing_hostnames_list:
-                    writer.writerow([hostname, datacenter, clustername or "", date_str])
+            # Write existing clusternames (except header)
+            for row in existing_rows[1:]:
+                if row:  # Skip empty rows
+                    writer.writerow(row)
+            
+            # Add the new clustername
+            writer.writerow([clustername])
+        debug_log(f"Successfully added clustername: {clustername}")
+        return True
     except Exception as e:
-        print(f"Error writing to CSV: {e}")
+        debug_log(f"Error writing to clusternames CSV: {e}")
+        return False
+
+def create_cluster_view(request):
+    """View to create a new cluster name"""
+    if request.method == 'POST':
+        datacenter = request.POST.get('datacenter')
+        architecture = request.POST.get('architecture') 
+        zone = request.POST.get('zone')
+        
+        # Generate the clustername
+        clustername = generate_clustername(datacenter, architecture, zone)
+        
+        # Save the clustername
+        result = save_clustername_to_csv(clustername)
+        
+        if result:
+            return JsonResponse({
+                'success': True,
+                'clustername': clustername
+            })
+        else:
+            return JsonResponse({
+                'success': False,
+                'error': 'Failed to save clustername or it already exists'
+            })
     
-    return True
+    return JsonResponse({'success': False, 'error': 'Invalid request method'})
 
-def get_next_hostname_sequence(base_hostname, is_dmz):
-    """Helper function to get the next available sequence number"""
-    return find_next_available_sequence(base_hostname, is_dmz)
 
-def validate_hostname_exists(hostname):
-    """Check if hostname already exists in CSV"""
+def create_hostnames_view(request):
+    """View to create new hostnames"""
+    if request.method == 'POST':
+        # Get the hostnames from the request
+        hostnames = request.POST.getlist('hostnames[]')
+        
+        # Save the hostnames
+        result = save_hostnames_to_csv(hostnames)
+        
+        if isinstance(result, dict) and result.get('success', False):
+            return JsonResponse({
+                'success': True,
+                'added': result['added'],
+                'duplicates': result['duplicates']
+            })
+        else:
+            return JsonResponse({
+                'success': False,
+                'error': 'Failed to save hostnames'
+            })
+    
+    return JsonResponse({'success': False, 'error': 'Invalid request method'})
+
+def get_clustername_prefix_from_name(clustername):
+    """Extract the prefix part of a clustername (everything before the last digits)"""
+    # Find the last sequence of digits at the end of the string
+    match = re.search(r'(.*?)(\d+)$', clustername)
+    if match:
+        return match.group(1)  # Return everything before the digits
+    return clustername  # Return the original if no digits found
+
+def find_next_available_clustername_sequence(clustername_prefix):
+    """
+    Find the next available sequence number for a clustername prefix
+    More flexible to handle inconsistent naming conventions
+    """
+    # Get all existing clusternames
+    existing_clusternames = get_existing_clusternames()
+    
+    # Get all existing hostnames (to avoid conflicts)
     existing_hostnames = get_existing_hostnames()
-    return hostname in existing_hostnames
+    
+    # Combine all names
+    all_existing_names = existing_clusternames + existing_hostnames
+    
+    # Filter names by matching prefix part (not using regex escape for more flexibility)
+    matching_sequences = []
+    
+    for name in all_existing_names:
+        # Get the prefix of the current name
+        current_prefix = get_clustername_prefix_from_name(name)
+        
+        # If this prefix matches our target prefix, extract the sequence number
+        if current_prefix.lower() == clustername_prefix.lower():
+            # Extract the sequence number
+            match = re.search(r'(\d+)$', name)
+            if match:
+                seq_num = int(match.group(1))
+                matching_sequences.append(seq_num)
+    
+    debug_log(f"Found {len(matching_sequences)} matching sequences for prefix {clustername_prefix}")
+    
+    # If no matching sequences found, start from 1
+    if not matching_sequences:
+        return 1
+    
+    # Sort sequence numbers
+    matching_sequences.sort()
+    
+    # Find the first gap in the sequence
+    for i in range(len(matching_sequences)):
+        if i == 0 and matching_sequences[0] > 1:
+            return 1
+        
+        if i < len(matching_sequences) - 1:
+            curr = matching_sequences[i]
+            next_val = matching_sequences[i + 1]
+            
+            if next_val > curr + 1:
+                return curr + 1
+    
+    # No gaps found, use next available number
+    return matching_sequences[-1] + 1
 
-def debug_log(message):
-    """Write a debug message to a log file"""
-    log_path = os.path.join(settings.BASE_DIR, 'generator', 'data', 'debug_log.txt')
-    try:
-        os.makedirs(os.path.dirname(log_path), exist_ok=True)
-        with open(log_path, 'a') as f:
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            f.write(f"[{timestamp}] {message}\n")
-    except Exception as e:
-        print(f"Error writing to debug log: {e}")
+
+def generate_clustername(datacenter, architecture, zone):
+    """
+    Generate a clustername with the format: datacenter + "-APAC-" + architecture + '-' + zone + "-" + sequence_number
+    Now handles inconsistent naming patterns
+    """
+    # Create the base clustername without the sequence number
+    base_clustername = f"{datacenter}-APAC-{architecture}-{zone}-"
+    
+    # Find the next available sequence number
+    next_seq = find_next_available_clustername_sequence(base_clustername)
+    
+    # Create the full clustername with sequence number
+    full_clustername = f"{base_clustername}{next_seq}"
+    
+    return full_clustername
+
+
+def validate_clustername_exists(clustername):
+    """
+    Check if a clustername already exists, using the more flexible prefix matching
+    """
+    # Get the prefix of the clustername we're checking
+    prefix_to_check = get_clustername_prefix_from_name(clustername)
+    
+    # Get sequence number of the clustername we're checking
+    seq_match = re.search(r'(\d+)$', clustername)
+    seq_to_check = int(seq_match.group(1)) if seq_match else None
+    
+    # Get all existing clusternames
+    existing_clusternames = get_existing_clusternames()
+    
+    # Loop through existing clusternames
+    for existing in existing_clusternames:
+        existing_prefix = get_clustername_prefix_from_name(existing)
+        
+        # If prefixes match (case-insensitive)
+        if existing_prefix.lower() == prefix_to_check.lower():
+            # If we don't care about the sequence number, it's a match
+            if seq_to_check is None:
+                return True
+                
+            # If we have a sequence number, check that too
+            existing_seq_match = re.search(r'(\d+)$', existing)
+            if existing_seq_match:
+                existing_seq = int(existing_seq_match.group(1))
+                if existing_seq == seq_to_check:
+                    return True
+    
+    return False
+
+
+def find_next_available_hostname_sequence(hostname_prefix, is_dmz=False):
+    """
+    Find the next available sequence number for a hostname prefix
+    Modified to use the more flexible prefix extraction
+    """
+    # Get all existing hostnames
+    existing_hostnames = get_existing_hostnames()
+    
+    # Get all existing clusternames (to avoid conflicts)
+    existing_clusternames = get_existing_clusternames()
+    
+    # Combine all names
+    all_existing_names = existing_hostnames + existing_clusternames
+    
+    # Filter names by matching prefix part
+    matching_sequences = []
+    
+    for name in all_existing_names:
+        # Get the prefix of the current name
+        current_prefix = get_clustername_prefix_from_name(name)
+        
+        # If this prefix matches our target prefix, extract the sequence number
+        if current_prefix.lower() == hostname_prefix.lower():
+            # Extract the sequence number
+            match = re.search(r'(\d+)$', name)
+            if match:
+                seq_num = int(match.group(1))
+                matching_sequences.append(seq_num)
+    
+    debug_log(f"Found {len(matching_sequences)} matching sequences for hostname prefix {hostname_prefix}")
+    
+    # If no matching sequences found, start from 1
+    if not matching_sequences:
+        return 1
+    
+    # Sort sequence numbers
+    matching_sequences.sort()
+    
+    # Find the first gap in the sequence
+    for i in range(len(matching_sequences)):
+        if i == 0 and matching_sequences[0] > 1:
+            # First number is greater than 1, so use 1
+            return 1
+        
+        if i < len(matching_sequences) - 1:
+            curr = matching_sequences[i]
+            next_val = matching_sequences[i + 1]
+            
+            if next_val > curr + 1:
+                # Found a gap, return the next number in sequence
+                return curr + 1
+    
+    # No gaps found, use next available number
+    return matching_sequences[-1] + 1
+
+def check_clustername_view(request):
+    """View to check if a clustername already exists"""
+    if request.method == 'POST':
+        clustername = request.POST.get('clustername')
+        
+        # Run the test function if a special flag is set
+        if request.POST.get('test_mode') == 'true':
+            test_clustername_matching()
+            return JsonResponse({'success': True, 'message': 'Test completed, check server logs'})
+        
+        # Extract the prefix
+        prefix = get_clustername_prefix_from_name(clustername)
+        
+        # Find the next available sequence
+        next_seq = find_next_available_clustername_sequence(prefix)
+        
+        return JsonResponse({
+            'success': True,
+            'exists': validate_clustername_exists(clustername),
+            'prefix': prefix,
+            'next_available_sequence': next_seq,
+            'suggested_name': f"{prefix}{next_seq}"
+        })
+    
+    return JsonResponse({'success': False, 'error': 'Invalid request method'})
